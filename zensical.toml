@@ -4,22 +4,23 @@ extra_css = ["stylesheets/extra.css"]
 
 nav = [
   {"All the Bags" = "https://bagofseeds.github.io/bagof/"},
-  {"Bag of Things" = "index.md"},
+  {"Bag of Core Magic" = "index.md"},
+  {"API" = "api.md"},
 ]
 
 # The site_name is shown in the page header and the browser window title
 #
 # Read more: https://zensical.org/docs/setup/basics/#site_name
-site_name = "bagof-things"
+site_name = "bagof-core-magic"
 
-site_description = "A template repository for useful things in a bag."
+site_description = "Core tools used by magic converters, validators, factories, etc."
 
 # The site_author attribute. This is used in the HTML head element.
 #
 # Read more: https://zensical.org/docs/setup/basics/#site_author
 site_author = "Yael Balbastre"
 
-site_url = "https://bagofseeds.github.io/bagof-repo-template/"
+site_url = "https://bagofseeds.github.io/bagof-core-magic/"
 
 copyright = """
 Copyright &copy; 2026 The authors
@@ -108,6 +109,7 @@ allow_inspection = true
 filters = "public"
 group_by_category = true
 show_category_heading = true
+show_signature_annotations = true
 
 # ----------------------------------------------------------------------------
 # Markdown extras

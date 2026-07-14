@@ -5,5 +5,5 @@ import importlib
 
 def test_template_submodule_is_importable() -> None:
     """The template package should be importable after installation."""
-    module = importlib.import_module("bagof.things")
+    module = importlib.import_module("bagof.core.magic")
     assert module is not None
