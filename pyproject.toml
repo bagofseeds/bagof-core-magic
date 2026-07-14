@@ -9,7 +9,7 @@ maintainers = [
 ]
 description = "Core tools used by the magic converters, validators, factories, etc."
 readme = "README.md"
-license = "MIT"
+license = {text = "MIT"}
 keywords = ["bagof", "python", "magic"]
 classifiers = [
     "Development Status :: 1 - Planning",
@@ -42,8 +42,8 @@ test = [
 
 [build-system]
 requires = [
-    "setuptools>=78.1.1",
-    "wheel>=0.46.2",
+    "setuptools>=59.0",
+    "wheel>=0.45.1",
     "versioningit>=1.0",
 ]
 build-backend = "setuptools.build_meta"
