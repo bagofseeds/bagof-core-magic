@@ -12,3 +12,13 @@ a[href="https://bagofseeds.github.io/bagof/"]::before {
   -webkit-mask: var(--icon-return) no-repeat center / contain;
   mask: var(--icon-return) no-repeat center / contain;
 }
+
+[data-md-color-scheme="default"] .md-logo {
+  /* Changes the color if it uses text/currentColor */
+  color: #228B22 !important;
+}
+
+[data-md-color-scheme="default"] .md-logo svg {
+  /* Forces the color if it renders as an inline SVG path */
+  fill: #228B22 !important;
+}
