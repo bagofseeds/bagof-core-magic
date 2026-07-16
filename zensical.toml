@@ -21,6 +21,8 @@ site_description = "Core tools used by magic converters, validators, factories, 
 site_author = "Yael Balbastre"
 
 site_url = "https://bagofseeds.github.io/bagof-core-magic/"
+repo_url = "https://github.com/bagofseeds/bagof-core-magic"
+repo_name = "bagofseeds/bagof-core-magic"
 
 copyright = """
 Copyright &copy; 2026 The authors
