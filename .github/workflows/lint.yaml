@@ -36,7 +36,7 @@ jobs:
       python-version: ${{ inputs.python-version }}
 
   spellcheck:
-    uses: bagofseeds/actions/.github/workflows/spellcheck.yaml@main
+    uses: bagofseeds/actions/.github/workflows/codespell.yaml@main
     with:
       tag: ${{ inputs.tag }}
       python-version: ${{ inputs.python-version }}
