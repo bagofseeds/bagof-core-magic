@@ -100,6 +100,19 @@ class MagicHint(tx.Generic[T]):
     or a pure hint.
     """
 
+    UNWRAP: tx.Tuple[tx.Any, ...] = (tx.Annotated, tx.TypeVar)
+    """
+    The hints that [`unwrapped`][], [`origin`][] and [`args`][] transparently
+    unwrap before introspecting [`hint`][].
+
+    A [`TypeVar`][typing.TypeVar] is resolved to its default, bound, or
+    (union of) constraints, so that a typevar is introspected exactly like
+    the hint it stands for. This matches [`fallback`][], which resolves
+    typevars through [`get_concrete_type`][].
+
+    Set to `(tx.Annotated,)` to opt out and introspect typevars as-is.
+    """
+
     def __init__(self, hint: tx.Any = UNSET) -> None:
         """
         Parameters
@@ -122,22 +135,25 @@ class MagicHint(tx.Generic[T]):
     @property
     def unwrapped(self) -> tx.Any:
         """
-        The unwrapped type hint, with any [`Annotated`][typing.Annotated]
-        wrappers removed.
+        The unwrapped type hint, with any hint listed in [`UNWRAP`][]
+        (by default, [`Annotated`][typing.Annotated] wrappers and
+        [`TypeVar`][typing.TypeVar]s) removed.
         """
         if getattr(self, "_unwrapped", None) is None:
             self._unwrapped = self._get_unwrapped()
         return self._unwrapped
 
     def _get_unwrapped(self) -> tx.Any:
-        return unwrap(self.hint)
+        return unwrap(self.hint, self.UNWRAP)
 
     @property
     def origin(self) -> tx.Any:
         """
         The "safe" origin of the type hint
 
-        * Any [`Annotated`][typing.Annotated] wrappers are removed.
+        * Any hint listed in [`UNWRAP`][] is removed (by default,
+          [`Annotated`][typing.Annotated] wrappers and
+          [`TypeVar`][typing.TypeVar]s).
         * If the origin is [`None`][], the hint itself is returned.
         """
         if getattr(self, "_origin", None) is None:
@@ -145,14 +161,16 @@ class MagicHint(tx.Generic[T]):
         return self._origin
 
     def _get_origin(self) -> tx.Any:
-        return get_origin_uw(self.hint)
+        return safe_get_origin(self.hint, unwrap=self.UNWRAP)
 
     @property
     def args(self) -> tx.Tuple[tx.Any, ...]:
         """
         The "safe" arguments of the type hint
 
-        * Any [`Annotated`][typing.Annotated] wrappers are removed.
+        * Any hint listed in [`UNWRAP`][] is removed (by default,
+          [`Annotated`][typing.Annotated] wrappers and
+          [`TypeVar`][typing.TypeVar]s).
         * If the origin is [`None`][], returns an empty tuple.
         """
         if getattr(self, "_args", None) is None:
@@ -160,7 +178,7 @@ class MagicHint(tx.Generic[T]):
         return self._args
 
     def _get_args(self) -> tx.Tuple[tx.Any, ...]:
-        return get_args_uw(self.hint)
+        return safe_get_args(self.hint, unwrap=self.UNWRAP)
 
     @property
     def fallback(self) -> tx.Any:
