@@ -9,7 +9,7 @@ on:
         default: ""
       python-version:
         description: Python version
-        required: true
+        required: false
         default: "3.x"
   workflow_call:
     inputs:
@@ -20,7 +20,7 @@ on:
         type: string
       python-version:
         description: Python version
-        required: true
+        required: false
         default: "3.x"
         type: string
 
