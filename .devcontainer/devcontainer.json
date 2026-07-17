@@ -1,0 +1,17 @@
+{
+  "features": { 
+    "ghcr.io/anthropics/devcontainer-features/claude-code:1.0": {},
+    "ghcr.io/devcontainers-extra/features/ruff:2": {},
+    "ghcr.io/hspaans/devcontainer-features/pytest:2": {}
+  },
+  "customizations": {
+    "codespaces": {
+      "repositories": {
+        "bagofseeds/bagof": { "permissions": "write-all" },
+        "bagofseeds/bagof-hints": { "permissions": "write-all" },
+        "bagofseeds/bagof-validators": { "permissions": "write-all" },
+        "bagofseeds/bagof-converters": { "permissions": "write-all" }
+      }
+    }
+  }
+}
