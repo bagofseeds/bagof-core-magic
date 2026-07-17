@@ -1,5 +1,5 @@
 # versioningit
-src/bagof/*/_version.py
+src/bagof/**/_version.py
 
 # vscode
 .vscode
