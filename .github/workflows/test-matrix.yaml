@@ -25,3 +25,4 @@ jobs:
     uses: bagofseeds/actions/.github/workflows/test-matrix.yaml@main
     with:
       tag: ${{ inputs.tag }}
+      requirements-file: tests/requirements.txt
