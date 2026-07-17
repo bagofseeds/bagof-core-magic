@@ -33,3 +33,4 @@ jobs:
     with:
       tag: ${{ inputs.tag }}
       python-version: ${{ inputs.python-version }}
+      requirements-file: tests/requirements.txt
