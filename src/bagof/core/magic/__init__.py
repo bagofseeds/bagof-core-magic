@@ -377,11 +377,12 @@ def get_from_registry(hint: tx.Any, registry: dict) -> tx.Any:
     type hints.
 
     !!! example
-        ```python
-        registry = {int: "number", object: "any"}
-
-        get_from_registry(bool, registry)   # -> 'number'
-        get_from_registry(str, registry)    # -> 'any'
+        ```pycon
+        >>> registry = {int: "number", object: "any"}
+        >>> get_from_registry(bool, registry)
+        'number'
+        >>> get_from_registry(str, registry)
+        'any'
         ```
     """
     # First naive pass
@@ -507,9 +508,11 @@ def safe_issubclass(subcls: tx.Any, cls: tx.Any) -> bool:
         at `subcls`'s `__orig_bases__`, instead of its `__bases__`.
 
     !!! example
-        ```python
-        safe_issubclass(bool, int)           # -> True
-        safe_issubclass(int, "not a type")   # -> False (no error)
+        ```pycon
+        >>> safe_issubclass(bool, int)
+        True
+        >>> safe_issubclass(int, "not a type")  # no error
+        False
         ```
     """
     if is_typeddict(cls):
@@ -528,9 +531,11 @@ def safe_isinstance(obj: tx.Any, cls: tx.Any) -> bool:
         at the `obj`'s `__orig_bases__`, instead of its `__bases__`.
 
     !!! example
-        ```python
-        safe_isinstance(1, int)           # -> True
-        safe_isinstance(1, "not a type")  # -> False (no error)
+        ```pycon
+        >>> safe_isinstance(1, int)
+        True
+        >>> safe_isinstance(1, "not a type")  # no error
+        False
         ```
     """
     if is_typeddict(cls):
@@ -576,12 +581,14 @@ def issubhint(hint: tx.Any, superhint: tx.Any) -> bool:
     are also valid for the superhint.
 
     !!! example
-        ```python
-        from typing import Union
-
-        issubhint(bool, int)                       # -> True
-        issubhint(Union[int, str], Union[int, str, bytes])  # -> True
-        issubhint(int, str)                        # -> False
+        ```pycon
+        >>> from typing import Union
+        >>> issubhint(bool, int)
+        True
+        >>> issubhint(Union[int, str], Union[int, str, bytes])
+        True
+        >>> issubhint(int, str)
+        False
         ```
     """
 
@@ -781,12 +788,14 @@ def unwrap(hint: tx.Any, origin: tx.Any = (tx.Annotated,)) -> tx.Any:
     unwrapped to its default, bound, or (union of) constraints.
 
     !!! example
-        ```python
-        from typing import Annotated
-
-        unwrap(Annotated[int, "meta"])            # -> int
-        unwrap(Annotated[Annotated[str, 1], 2])   # -> str
-        unwrap(int)                               # -> int (unchanged)
+        ```pycon
+        >>> from typing import Annotated
+        >>> unwrap(Annotated[int, "meta"])
+        <class 'int'>
+        >>> unwrap(Annotated[Annotated[str, 1], 2])
+        <class 'str'>
+        >>> unwrap(int)  # unchanged
+        <class 'int'>
         ```
     """
     if origin is None:
