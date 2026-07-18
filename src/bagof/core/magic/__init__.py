@@ -27,6 +27,10 @@ __all__ = [
 import inspect
 import math
 import numbers
+
+# `typing` is imported only so mkdocstrings resolves the `typing.*`
+# cross-references in the docstrings below (e.g. `typing.is_typeddict`).
+import typing  # noqa: F401
 from collections import abc
 
 # dependencies
