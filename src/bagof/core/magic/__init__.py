@@ -474,8 +474,9 @@ def is_typeddict(cls: tx.Any) -> bool:
     of it.
 
     !!! tip
-        This function differs from [`typing.is_typeddict`][] in that it
-        returns `True` for [`TypedDict`][tx.TypedDict] itself.
+        This function differs from
+        [`typing.is_typeddict`][tx.is_typeddict] in that it returns `True`
+        for [`TypedDict`][tx.TypedDict] itself.
     """
     if cls is tx.TypedDict:
         return True
