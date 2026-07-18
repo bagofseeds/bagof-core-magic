@@ -77,7 +77,8 @@ UNSET = Unset()
 """
 A value that indicates that an argument was not set.
 
-This is different from [`None`][], which may be a valid value.
+!!! note
+    This is different from [`None`][], which may be a valid value.
 """
 
 
@@ -105,10 +106,11 @@ class MagicHint(tx.Generic[T]):
     The hints that [`unwrapped`][], [`origin`][] and [`args`][] transparently
     unwrap before introspecting [`hint`][].
 
-    A [`TypeVar`][typing.TypeVar] is resolved to its default, bound, or
-    (union of) constraints, so that a typevar is introspected exactly like
-    the hint it stands for. This matches [`fallback`][], which resolves
-    typevars through [`get_concrete_type`][].
+    !!! note
+        A [`TypeVar`][typing.TypeVar] is resolved to its default, bound,
+        or (union of) constraints, so that a typevar is introspected
+        exactly like the hint it stands for. This matches [`fallback`][],
+        which resolves typevars through [`get_concrete_type`][].
 
     Set to `(tx.Annotated,)` to opt out and introspect typevars as-is.
     """
@@ -791,9 +793,12 @@ def safe_get_origin(hint: tx.Any, unwrap: tx.Any = ()) -> tx.Any:
     """
     Safe version of [`tx.get_origin`][].
 
-    Returns the input type, instead of `None`, if the input is not a
-    generic type. Can also unwrap some hints
-    (e.g. [`Annotated`][typing.Annotated]) if asked.
+    Can also unwrap some hints (e.g. [`Annotated`][typing.Annotated])
+    if asked.
+
+    !!! note
+        Unlike [`typing.get_origin`][], this returns the input hint
+        itself, instead of `None`, when the hint is not a generic type.
     """
     if unwrap:
         hint = _unwrap(hint, origin=unwrap)
