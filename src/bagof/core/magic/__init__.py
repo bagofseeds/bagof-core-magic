@@ -375,6 +375,14 @@ def get_from_registry(hint: tx.Any, registry: dict) -> tx.Any:
     """
     Get the best matching value from a registry whose keys are types or
     type hints.
+
+    !!! example
+        ```python
+        registry = {int: "number", object: "any"}
+
+        get_from_registry(bool, registry)   # -> 'number'
+        get_from_registry(str, registry)    # -> 'any'
+        ```
     """
     # First naive pass
     best_match, best_dist = _get_best_match(hint, registry)
@@ -497,6 +505,12 @@ def safe_issubclass(subcls: tx.Any, cls: tx.Any) -> bool:
     !!! warning
         If `cls` is a [`TypedDict`][tx.TypedDict], this function looks
         at `subcls`'s `__orig_bases__`, instead of its `__bases__`.
+
+    !!! example
+        ```python
+        safe_issubclass(bool, int)           # -> True
+        safe_issubclass(int, "not a type")   # -> False (no error)
+        ```
     """
     if is_typeddict(cls):
         return cls in _all_orig_bases(subcls) or subcls is dict
@@ -512,6 +526,12 @@ def safe_isinstance(obj: tx.Any, cls: tx.Any) -> bool:
     !!! warning
         If `cls` is a [`TypedDict`][tx.TypedDict], this function looks
         at the `obj`'s `__orig_bases__`, instead of its `__bases__`.
+
+    !!! example
+        ```python
+        safe_isinstance(1, int)           # -> True
+        safe_isinstance(1, "not a type")  # -> False (no error)
+        ```
     """
     if is_typeddict(cls):
         return safe_issubclass(type(obj), cls)
@@ -554,6 +574,15 @@ def issubhint(hint: tx.Any, superhint: tx.Any) -> bool:
 
     A hint is a valid subhint if all values that are valid for the hint
     are also valid for the superhint.
+
+    !!! example
+        ```python
+        from typing import Union
+
+        issubhint(bool, int)                       # -> True
+        issubhint(Union[int, str], Union[int, str, bytes])  # -> True
+        issubhint(int, str)                        # -> False
+        ```
     """
 
     # shortcircuits
@@ -753,8 +782,11 @@ def unwrap(hint: tx.Any, origin: tx.Any = (tx.Annotated,)) -> tx.Any:
 
     !!! example
         ```python
-        unwrap(Annotated[int, "metadata"], unwrap=Annotated)   # returns int
-        unwrap(Optional[int], unwrap=Optional)                 # returns int
+        from typing import Annotated
+
+        unwrap(Annotated[int, "meta"])            # -> int
+        unwrap(Annotated[Annotated[str, 1], 2])   # -> str
+        unwrap(int)                               # -> int (unchanged)
         ```
     """
     if origin is None:
