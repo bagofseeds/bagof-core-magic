@@ -702,25 +702,28 @@ def _issubunion(hint: tx.Any, superhint: tx.Any) -> bool:
     if safe_get_origin(superhint_uw) not in UNION_TYPES:
         # Invalid superhint -> error
         raise TypeError(f"union {superhint} is not a Union type")
-    # Unwrap hint only if it gets us a union type
-    if safe_get_origin(hint_uw) in UNION_TYPES:
-        hint = hint_uw
-    hint = tx.Union[hint]
     # !! We use tx.get_origin instead of _get_origin
     # !! to differentiate tx.Union (origin is None)
     # !! from tx.Union[...] (origin is tx.Union)
     if not tx.get_origin(superhint_uw):
-        # All unions are subhints of `tx.Union`
+        # Every hint is a subhint of the bare `tx.Union`.
         return True
-    if not tx.get_origin(hint_uw):
-        # # tx.Union is not a subhint of tx.Union[...]
-        return False
-    # Check that all args of hint are subhints of one of the superhint's args
-    args = safe_get_args(hint_uw)
+    # Collect the hint's member hints. A hint is a subhint of the union if
+    # each of its members is a subhint of one of the union's members:
+    #   * a parametrised union contributes its arguments;
+    #   * the bare `tx.Union` is not a subhint of a parametrised union;
+    #   * any other hint (e.g. `int`) is a single member, so that a plain
+    #     type is a subhint of a union that contains it.
+    if safe_get_origin(hint_uw) in UNION_TYPES:
+        if not tx.get_origin(hint_uw):
+            return False
+        members = safe_get_args(hint_uw)
+    else:
+        members = (hint_uw,)
     superargs = safe_get_args(superhint_uw)
     return all(
-        any(issubhint(arg, superarg) for superarg in superargs)
-        for arg in args
+        any(issubhint(member, superarg) for superarg in superargs)
+        for member in members
     )
 
 
