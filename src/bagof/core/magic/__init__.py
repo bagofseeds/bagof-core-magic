@@ -27,10 +27,6 @@ __all__ = [
 import inspect
 import math
 import numbers
-
-# `typing` is imported only so mkdocstrings resolves the `typing.*`
-# cross-references in the docstrings below (e.g. `typing.is_typeddict`).
-import typing  # noqa: F401
 from collections import abc
 
 # dependencies
@@ -476,8 +472,9 @@ def is_typeddict(cls: tx.Any) -> bool:
     of it.
 
     !!! tip
-        This function differs from [`typing.is_typeddict`][] in that it
-        returns `True` for [`TypedDict`][tx.TypedDict] itself.
+        This function differs from
+        [`typing.is_typeddict`][tx.is_typeddict] in that it returns `True`
+        for [`TypedDict`][tx.TypedDict] itself.
     """
     if cls is tx.TypedDict:
         return True
