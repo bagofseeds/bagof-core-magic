@@ -97,8 +97,10 @@ class MagicHint(tx.Generic[T]):
 
     FALLBACK = UNSET
     """
-    A concrete fallback type, in case the type hint is an abstract class
-    or a pure hint.
+    A concrete fallback type, used when the type hint does not resolve to
+    a concrete class - for example, when it is an abstract class, or a
+    bare typing construct (such as [`Union`][typing.Union] or
+    [`Literal`][typing.Literal]) with no concrete origin of its own.
     """
 
     UNWRAP: tx.Tuple[tx.Any, ...] = (tx.Annotated, tx.TypeVar)
@@ -107,10 +109,11 @@ class MagicHint(tx.Generic[T]):
     unwrap before introspecting [`hint`][].
 
     !!! note
-        A [`TypeVar`][typing.TypeVar] is resolved to its default, bound,
-        or (union of) constraints, so that a typevar is introspected
-        exactly like the hint it stands for. This matches [`fallback`][],
-        which resolves typevars through [`get_concrete_type`][].
+        A [`TypeVar`][typing.TypeVar] is resolved to its default, its
+        (union of) constraints, or its bound - in that order - so that a
+        typevar is introspected exactly like the hint it stands for. This
+        matches [`fallback`][], which resolves typevars through
+        [`get_concrete_type`][].
 
     Set to `(tx.Annotated,)` to opt out and introspect typevars as-is.
     """
@@ -243,8 +246,8 @@ class MagicError(Exception):
         """
         Other Parameters
         ----------------
-        this : HintMagic
-            The HintMagic instance that raised the error.
+        this : MagicHint
+            The MagicHint instance that raised the error.
         value : Any
             The value that caused the error.
         """
@@ -324,11 +327,12 @@ def get_concrete_type(hint: tx.Any, fallback: type = UNSET) -> tx.Type[tx.Any]:
     * If the hint has an origin, it is used.
     * If the hint is a [`TypeVar`][typing.TypeVar]:
         - its default value is used, if it has one; otherwise
-        - its bound is used, if it has one; otherwise
         - its constraints are used, if it has any; otherwise
+        - its bound is used, if it has one; otherwise
         - the fallback type is used, if it is provided; otherwise
         - a [`TypeError`][] is raised.
-    * If the hint is a concrete type, it is returned as is; otherwise
+    * If the (resolved) hint is a concrete, non-abstract type, it is
+      returned as is; otherwise
     * The fallback type is used, if it is provided; otherwise
     * A [`TypeError`][] is raised.
     """
@@ -347,12 +351,13 @@ def get_default(hint: tx.Any) -> tx.Any:
     """
     Get a default value from a type hint.
 
+    * If the hint is a [`Literal`][tx.Literal], the first value in the
+      literal is returned ([`None`][], if [`None`][] is one of the
+      literal's values).
     * If the hint is a [`Union`][tx.Union] that contains [`NoneType`][],
       [`None`][] is returned.
-    * If the hint is a [`Literal`][tx.Literal], the first value in the
-      literal is returned.
     * Otherwise, if the hint is a [`Union`][tx.Union], we recurse through
-      its sub-hints.
+      its sub-hints and return the first default found.
     * If no default value can be found, a [`TypeError`][] is raised.
       A factory should then be used.
     """
@@ -377,6 +382,12 @@ def get_from_registry(hint: tx.Any, registry: dict) -> tx.Any:
     """
     Get the best matching value from a registry whose keys are types or
     type hints.
+
+    The best match is the registry key that is the narrowest superclass
+    (or superhint) of `hint`, following its MRO; exact matches are always
+    preferred. If `hint` is [`Annotated`][typing.Annotated] and no match is
+    found for it directly, the search is retried against its unwrapped
+    hint.
 
     !!! example
         ```pycon
@@ -887,7 +898,13 @@ def get_args_uw(hint: tx.Any) -> tx.Tuple[tx.Any, ...]:
 
 def eq_safenan(x: tx.Any) -> bool:
     """
-    Safe equality comparison that treats NaN as equal to NaN.
+    Map a value to a form that compares equal across NaNs.
+
+    Since `#!python float("nan") != float("nan")`, comparing values that
+    may contain NaN with `==` is unsafe. Apply this function to both
+    operands before comparing them: real NaN values are mapped to the
+    string `"NaN"` (so that two NaNs compare equal), while every other
+    value is returned unchanged.
     """
     if isinstance(x, REAL_TYPES) and math.isnan(x):
         return "NaN"
