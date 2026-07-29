@@ -3,8 +3,8 @@
 extra_css = ["stylesheets/extra.css"]
 
 nav = [
-  {"All the Bags" = "https://bagofseeds.github.io/bagof/"},
-  {"Bag of Core Magic" = "index.md"},
+  {"Bag of" = "https://bagofseeds.github.io/bagof/"},
+  {"Core Magic" = "index.md"},
   {"API" = "api.md"},
 ]
 
@@ -74,7 +74,7 @@ toggle.name = "Switch to light mode"
 # - https://zensical.org/docs/authoring/icons-emojis/#search
 # ----------------------------------------------------------------------------
 [project.theme.icon]
-logo =  "material/sprout"
+logo =  "fontawesome/solid/circle-right"
 repo = "fontawesome/brands/github"
 
 # ----------------------------------------------------------------------------
