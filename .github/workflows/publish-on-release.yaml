@@ -14,6 +14,7 @@ jobs:
       tag: ${{ github.ref }}
       test: true
       publish: test+pypi
+      requirements-file: tests/requirements.txt
     secrets:
       PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
       TEST_PYPI_TOKEN: ${{ secrets.TEST_PYPI_TOKEN }}
