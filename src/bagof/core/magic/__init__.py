@@ -607,7 +607,10 @@ def ishintstance(obj: tx.Any, hint: tx.Any) -> bool:
 
 def _ishintstance_type(obj: tx.Any, hint: tx.Any) -> bool:
     """Like isinstance, but the second argument can be a type hint."""
-    hint_uw = get_origin_uw(hint)
+    # Unwrap the hint, do *not* take its origin: the origin of `type[T]`
+    # is the bare `type`, whose `get_args` is always empty, which would
+    # make every `type[T]` behave like an unparametrised `type`.
+    hint_uw = unwrap(hint)
     if safe_get_origin(hint_uw) is not type:
         # Invalid superhint -> error
         raise TypeError(f"Hint {hint} is not a type[]")
