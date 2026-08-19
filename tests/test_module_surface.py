@@ -12,6 +12,7 @@ import typing_extensions as tx
 import bagof.core.magic as magic
 from bagof.core.magic import (
     UNION_TYPES,
+    eq_safenan,
     type2hint,
 )
 
@@ -52,6 +53,26 @@ def test_type_checking_shim_names_come_from_types() -> None:
     assert not hasattr(tx, "NoneType")
     assert not hasattr(tx, "UnionType")
     assert magic.NoneType is type(None)
+
+
+# --- eq_safenan --------------------------------------------------------
+
+
+def test_nans_compare_equal() -> None:
+    nan = float("nan")
+    assert nan != nan
+    assert eq_safenan(nan) == eq_safenan(nan)
+
+
+def test_nan_does_not_collide_with_a_string() -> None:
+    # Regression: NaN was mapped to the string "NaN", which put it in the
+    # same value space as the inputs it is compared against.
+    assert eq_safenan("NaN") != eq_safenan(float("nan"))
+
+
+@pytest.mark.parametrize("value", [3, 0.5, "text", None, [1, 2]])
+def test_other_values_are_unchanged(value: tx.Any) -> None:
+    assert eq_safenan(value) is value
 
 
 # --- type2hint ---------------------------------------------------------
