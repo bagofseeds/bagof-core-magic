@@ -8,7 +8,7 @@ import pytest
 import typing_extensions as tx
 
 # locals
-from bagof.core.magic import MagicError, MagicHint, MultipleCauses
+from bagof.core.magic import UNSET, MagicError, MagicHint, MultipleCauses
 
 
 class Magic(MagicHint):
@@ -124,3 +124,65 @@ def test_pickle_round_trip_of_a_subclass() -> None:
     error = MagicError("boom", value=1)
     assert pickle.loads(pickle.dumps(error)).value == 1
     assert issubclass(Custom, MagicError)
+
+
+# --- make_error builds, error raises ----------------------------------
+
+
+def test_make_error_returns_and_error_raises() -> None:
+    # The two verbs are distinct, so neither can be mistaken for the
+    # other - `MagicHint.error` used to raise while every subclass
+    # override returned, with the arguments in the opposite order.
+    magic = Magic()
+    built = magic.make_error(1, "built")
+    assert isinstance(built, MagicError)
+    assert built.value == 1
+    assert built.message == "built"
+
+    with pytest.raises(MagicError) as info:
+        magic.error("raised", 1)
+    assert info.value.value == 1
+    assert info.value.message == "raised"
+
+
+def test_error_raises_whatever_make_error_builds() -> None:
+    class CustomError(MagicError):
+        pass
+
+    class CustomMagic(MagicHint):
+        DEFAULT = tx.Any
+
+        def make_error(
+            self,
+            value: tx.Any = UNSET,
+            message: tx.Optional[str] = None,
+            **kwargs,
+        ) -> MagicError:
+            kwargs.setdefault("type", CustomError)
+            return super().make_error(value, message, **kwargs)
+
+    # Overriding only `make_error` is enough: `error` is inherited.
+    assert isinstance(CustomMagic().make_error(1, "x"), CustomError)
+    with pytest.raises(CustomError):
+        CustomMagic().error("x", 1)
+
+
+# --- a hint cannot be reassigned --------------------------------------
+
+
+def test_hint_cannot_be_reassigned() -> None:
+    # The introspected properties are computed once and `__post_init__`
+    # runs once, so a reassigned hint would leave the object describing
+    # a hint it no longer has - and skip its own BOUND check.
+    magic = Magic(tx.List[int])
+    assert magic.origin is list
+    with pytest.raises(AttributeError, match="cannot be reassigned"):
+        magic.hint = tx.Dict[str, int]
+    assert magic.hint == tx.List[int]
+    assert magic.origin is list
+
+
+def test_other_attributes_are_still_writable() -> None:
+    magic = Magic(int)
+    magic.whatever = 1  # type: ignore[attr-defined]
+    assert magic.whatever == 1  # type: ignore[attr-defined]
