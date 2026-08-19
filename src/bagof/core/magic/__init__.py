@@ -34,8 +34,8 @@ import typing_extensions as tx
 
 # optionals
 if tx.TYPE_CHECKING:
-    import numpy as np
-    from typing_extensions import NoneType, UnionType
+    import numpy as _np
+    from types import NoneType, UnionType
 else:
     try:
         from types import NoneType, UnionType
