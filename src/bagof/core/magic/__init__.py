@@ -29,6 +29,7 @@ __all__ = [
 ]
 
 # stdlib
+import collections
 import inspect
 import math
 import numbers
@@ -992,6 +993,60 @@ def issubscriptable(x: tx.Any) -> bool:
     return False
 
 
+_TYPE2HINT_NAMES = (
+    (dict, "Dict"),
+    (frozenset, "FrozenSet"),
+    (list, "List"),
+    (set, "Set"),
+    (tuple, "Tuple"),
+    (type, "Type"),
+    (abc.Callable, "Callable"),
+    (abc.Container, "Container"),
+    (abc.Coroutine, "Coroutine"),
+    (abc.Generator, "Generator"),
+    (abc.Hashable, "Hashable"),
+    (abc.ItemsView, "ItemsView"),
+    (abc.Iterable, "Iterable"),
+    (abc.Iterator, "Iterator"),
+    (abc.KeysView, "KeysView"),
+    (abc.Mapping, "Mapping"),
+    (abc.MappingView, "MappingView"),
+    (abc.MutableMapping, "MutableMapping"),
+    (abc.MutableSequence, "MutableSequence"),
+    (abc.MutableSet, "MutableSet"),
+    (abc.Reversible, "Reversible"),
+    (abc.Sequence, "Sequence"),
+    (abc.Set, "AbstractSet"),
+    (abc.Sized, "Sized"),
+    (abc.ValuesView, "ValuesView"),
+    (collections.ChainMap, "ChainMap"),
+    (collections.Counter, "Counter"),
+    (collections.OrderedDict, "OrderedDict"),
+    (collections.defaultdict, "DefaultDict"),
+    (collections.deque, "Deque"),
+)
+"""
+The type hint each non-subscriptable type maps to, by name.
+
+An explicit table, rather than deriving the name from the type's own: the
+capitalisation does not follow (`defaultdict` becomes `DefaultDict`,
+`frozenset` becomes `FrozenSet`, `abc.Set` becomes `AbstractSet`).
+"""
+
+_TYPE2HINT = {
+    cls: getattr(tx, name)
+    for cls, name in _TYPE2HINT_NAMES
+    if hasattr(tx, name)
+}
+"""
+[`_TYPE2HINT_NAMES`][], resolved against the running `typing_extensions`.
+
+Entries whose hint the running version does not provide (`ByteString`
+was removed, for example) are simply left out, so the type is returned
+unchanged rather than raising at import time.
+"""
+
+
 def type2hint(x: tx.Any) -> tx.Any:
     """
     Convert a type to a (subscriptable) type hint.
@@ -1001,16 +1056,19 @@ def type2hint(x: tx.Any) -> tx.Any:
       For example, in python 3.8, `#!python type2hint(list)` returns
       [`typing.List`][tx.List].
     * Otherwise, the value is returned as is.
+
+    !!! example
+        ```pycon
+        >>> type2hint(frozenset)
+        typing.FrozenSet
+        >>> type2hint(3)  # not a type, so unchanged
+        3
+        ```
     """
     if issubscriptable(x):
         return x
-
-    # Look for a type hint with the same name as the type
-    name = x.__name__.split(".")[-1]
-    name = name.capitalize()
-    if hasattr(tx, name):
-        # Type / List / Tuple / ...
-        return getattr(tx, name)
-
-    # Otherwise, return the value as is
-    return x
+    try:
+        return _TYPE2HINT.get(x, x)
+    except TypeError:
+        # Unhashable: cannot be a key, so there is nothing to look up.
+        return x
