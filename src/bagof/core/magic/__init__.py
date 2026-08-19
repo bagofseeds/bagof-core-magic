@@ -779,6 +779,11 @@ def issubhint(hint: tx.Any, superhint: tx.Any) -> bool:
         # superhint
         constraints = getattr(hint, "__constraints__", ())
         if constraints:
+            if origin_uw in UNION_TYPES:
+                # Against a union, ask about the union the typevar
+                # stands for: each constraint on its own is not a union,
+                # but their combination is.
+                return issubhint(unwrap(hint, tx.TypeVar), superhint)
             return all(
                 issubhint(constraint, superhint)
                 for constraint in constraints
@@ -902,8 +907,12 @@ def _issubunion(hint: tx.Any, superhint: tx.Any) -> bool:
     # !! to differentiate tx.Union (origin is None)
     # !! from tx.Union[...] (origin is tx.Union)
     if not tx.get_origin(superhint_uw):
-        # Every hint is a subhint of the bare `tx.Union`.
-        return True
+        # Every union - and only a union - is a subhint of the bare
+        # `tx.Union`, the same rule `_issubliteral` applies for a bare
+        # `Literal`. A *parametrised* union is different: a plain type
+        # is a subhint of one that contains it, which the member logic
+        # below works out.
+        return safe_get_origin(hint_uw) in UNION_TYPES
     # Collect the hint's member hints. A hint is a subhint of the union if
     # each of its members is a subhint of one of the union's members:
     #   * a parametrised union contributes its arguments;
