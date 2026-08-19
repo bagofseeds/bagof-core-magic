@@ -11,6 +11,8 @@ from bagof.core.magic import (
     get_default,
     get_from_registry,
     ishintstance,
+    safe_isinstance,
+    safe_issubclass,
     unwrap,
 )
 
@@ -132,3 +134,38 @@ def test_unwrap_terminates_on_a_typevar_cycle() -> None:
         # cycle cannot be built there. The guard itself is covered above.
         pytest.skip("TypeVar.__default__ is not writable")
     assert unwrap(first, (tx.Annotated, tx.TypeVar)) is tx.Any
+
+
+# --- tuples, like the builtins ----------------------------------------
+
+
+@pytest.mark.parametrize(
+    "obj,classes,expected",
+    [
+        (1, (int, str), True),
+        (1.5, (int, str), False),
+        (1, (), False),
+        # Still safe: a non-type member is skipped, not raised on.
+        (1, (int, "not a type"), True),
+        (1.5, (int, "not a type"), False),
+    ],
+)
+def test_safe_isinstance_accepts_a_tuple(
+    obj: tx.Any, classes: tx.Any, expected: bool
+) -> None:
+    assert safe_isinstance(obj, classes) is expected
+
+
+@pytest.mark.parametrize(
+    "subcls,classes,expected",
+    [
+        (bool, (int, str), True),
+        (float, (int, str), False),
+        (bool, (), False),
+        (bool, (int, "not a type"), True),
+    ],
+)
+def test_safe_issubclass_accepts_a_tuple(
+    subcls: tx.Any, classes: tx.Any, expected: bool
+) -> None:
+    assert safe_issubclass(subcls, classes) is expected
