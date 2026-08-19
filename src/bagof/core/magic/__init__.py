@@ -704,6 +704,30 @@ def safe_isinstance(obj: tx.Any, cls: tx.Any) -> bool:
     return False
 
 
+def normalise_hint(hint: tx.Any) -> tx.Any:
+    """
+    Put a hint in its canonical form.
+
+    A bare [`None`][] means [`NoneType`][types.NoneType] when it is used
+    as a type hint, so it is replaced by it. Every other hint is returned
+    unchanged.
+
+    !!! note
+        Only a bare `None` is replaced. A `None` *inside* a hint keeps its
+        meaning: `#!python Literal[None]` is a literal `None` **value**,
+        not a type.
+
+    !!! example
+        ```pycon
+        >>> normalise_hint(None)
+        <class 'NoneType'>
+        >>> normalise_hint(int)
+        <class 'int'>
+        ```
+    """
+    return NoneType if hint is None else hint
+
+
 def ishintstance(obj: tx.Any, hint: tx.Any) -> bool:
     """
     Like isinstance, but the second argument can be a type hint.
@@ -712,6 +736,7 @@ def ishintstance(obj: tx.Any, hint: tx.Any) -> bool:
       that `obj` is a type and that it is valid subclass of the hint argument.
     * Otherwise, returns `#!python  issubhint(type(obj), hint)`.
     """
+    hint = normalise_hint(hint)
     origin_uw = get_origin_uw(hint)
     if origin_uw is type:
         return _ishintstance_type(obj, hint)
@@ -753,6 +778,7 @@ def issubhint(hint: tx.Any, superhint: tx.Any) -> bool:
         False
         ```
     """
+    hint, superhint = normalise_hint(hint), normalise_hint(superhint)
 
     # shortcircuits
     if superhint is tx.Any:
