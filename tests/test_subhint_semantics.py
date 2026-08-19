@@ -1,11 +1,13 @@
 """Tests for `issubhint`/`ishintstance`'s hint semantics."""
 
 # dependencies
+import pytest
 import typing_extensions as tx
 
 # locals
 from bagof.core.magic import (
     get_concrete_type,
+    issubhint,
 )
 
 ARG_CASES = [
@@ -39,6 +41,44 @@ ARG_CASES = [
     (tx.Tuple[str, int], tx.Tuple[int, ...], False),
     (tx.Tuple[int, ...], tx.Tuple[int, ...], True),
 ]
+
+
+# --- the bare Union / Literal forms are structural ---------------------
+
+
+@pytest.mark.parametrize(
+    "hint,expected",
+    [
+        (tx.Union[int, str], True),
+        (tx.Optional[int], True),
+        (int, False),
+        (None, False),
+        (tx.Any, False),
+        (tx.Literal[1], False),
+    ],
+)
+def test_only_a_union_is_a_subhint_of_the_bare_union(
+    hint: tx.Any, expected: bool
+) -> None:
+    # Matches what `_issubliteral` has always done for a bare `Literal`,
+    # and is what makes `BOUND = tx.Union` mean anything.
+    assert issubhint(hint, tx.Union) is expected
+
+
+def test_a_parametrised_union_still_accepts_its_members() -> None:
+    # The bare form asks "is this a union?"; the parametrised form asks
+    # "is this one of these?". Both must keep working.
+    assert issubhint(int, tx.Union[int, str]) is True
+    assert issubhint(bool, tx.Union[int, str]) is True
+    assert issubhint(bytes, tx.Union[int, str]) is False
+    assert issubhint(tx.Union, tx.Union[int, str]) is False
+
+
+def test_a_constrained_typevar_is_the_union_it_stands_for() -> None:
+    constrained = tx.TypeVar("constrained", int, str)
+    assert issubhint(constrained, tx.Union) is True
+    assert issubhint(constrained, tx.Union[int, str, bytes]) is True
+    assert issubhint(constrained, tx.Union[int, bytes]) is False
 
 
 # --- get_concrete_type takes the first constraint ---------------------
