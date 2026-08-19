@@ -152,6 +152,9 @@ class MagicHint(tx.Generic[T]):
     Set to `(tx.Annotated,)` to opt out and introspect typevars as-is.
     """
 
+    _FROZEN = ("hint",)
+    """The attributes that cannot be reassigned after construction."""
+
     def __init__(self, hint: tx.Any = UNSET) -> None:
         """
         Parameters
@@ -159,11 +162,28 @@ class MagicHint(tx.Generic[T]):
         hint : Any, optional
             The type hint to use for this magic object.
             If not provided, the default hint for the class is used.
+
+        !!! note
+            [`hint`][] cannot be reassigned afterwards. Build a new magic
+            object for a different hint - the introspected properties are
+            computed once and kept.
         """
         if hint is UNSET:
             hint = self.DEFAULT
-        self.hint = hint
+        self.hint = normalise_hint(hint)
         self.__post_init__()
+
+    def __setattr__(self, name: str, value: tx.Any) -> None:
+        # `unwrapped`/`origin`/`args`/`fallback` are computed once and
+        # kept, and `__post_init__` runs once - so a reassigned `hint`
+        # would leave the object describing the hint it no longer has,
+        # and would skip its own `BOUND` check. Refuse instead.
+        if name in self._FROZEN and name in self.__dict__:
+            raise AttributeError(
+                f"{type(self).__name__}.{name} cannot be reassigned; "
+                f"build a new {type(self).__name__} instead"
+            )
+        super().__setattr__(name, value)
 
     def __post_init__(self) -> None:
         if not issubhint(self.hint, self.BOUND):
