@@ -395,11 +395,11 @@ def get_default(hint: tx.Any) -> tx.Any:
     """
     origin = safe_get_origin(hint, unwrap=tx.Annotated)
     args = safe_get_args(hint, unwrap=tx.Annotated)
-    if origin is tx.Literal:
+    if origin is tx.Literal and args:
         if None in args:
             return None
         return args[0]
-    if origin in (tx.Union, UnionType):
+    if origin in UNION_TYPES:
         if NoneType in args:
             return None
         for arg in args:
@@ -472,8 +472,12 @@ def _get_best_match(hint: tx.Any, registry: dict) -> tx.Tuple[tx.Any, float]:
                 # Update best match
                 best_match, best_dist = key, dist
 
-        elif dist < float('inf') and is_typeddict(key):
-            # Prefer typeddict over other types if they are compatible
+        elif dist == best_dist < float("inf") and is_typeddict(key):
+            # Prefer typeddict over other types if they are compatible.
+            # Two guards matter here: the tie (a typeddict key that is
+            # *further* away must not displace a nearer match) and the
+            # finite distance (the initial `best_dist` is infinite, and an
+            # unrelated typeddict key must not win by tying with it).
             best_match, best_dist = key, dist
 
         elif dist == best_dist:
@@ -494,7 +498,11 @@ def _type_dist(subcls: type, cls: type) -> int:
         return float("inf")
     if not safe_issubclass(subcls, cls):
         return float("inf")
-    if tx.is_typeddict(cls):
+    # Our `is_typeddict`, not `tx.is_typeddict`: the latter is False for
+    # `TypedDict` itself, which would send a typeddict subclass down the
+    # `__mro__` branch, where `TypedDict` never appears - so the loop below
+    # would fall through and report the "not found" distance instead of 1.
+    if is_typeddict(cls):
         bases = _all_orig_bases(subcls)
     else:
         bases = subcls.__mro__
@@ -557,10 +565,14 @@ def safe_issubclass(subcls: tx.Any, cls: tx.Any) -> bool:
         ```pycon
         >>> safe_issubclass(bool, int)
         True
+        >>> safe_issubclass(bool, (str, int))  # a tuple, like `issubclass`
+        True
         >>> safe_issubclass(int, "not a type")  # no error
         False
         ```
     """
+    if isinstance(cls, tuple):
+        return any(safe_issubclass(subcls, each) for each in cls)
     if is_typeddict(cls):
         return cls in _all_orig_bases(subcls) or subcls is dict
     if isinstance(subcls, type) and isinstance(cls, type):
@@ -580,10 +592,14 @@ def safe_isinstance(obj: tx.Any, cls: tx.Any) -> bool:
         ```pycon
         >>> safe_isinstance(1, int)
         True
+        >>> safe_isinstance(1, (str, int))  # a tuple, like `isinstance`
+        True
         >>> safe_isinstance(1, "not a type")  # no error
         False
         ```
     """
+    if isinstance(cls, tuple):
+        return any(safe_isinstance(obj, each) for each in cls)
     if is_typeddict(cls):
         return safe_issubclass(type(obj), cls)
     if isinstance(cls, type) and cls is not tx.Any:
@@ -607,7 +623,10 @@ def ishintstance(obj: tx.Any, hint: tx.Any) -> bool:
 
 def _ishintstance_type(obj: tx.Any, hint: tx.Any) -> bool:
     """Like isinstance, but the second argument can be a type hint."""
-    hint_uw = get_origin_uw(hint)
+    # Unwrap the hint, do *not* take its origin: the origin of `type[T]`
+    # is the bare `type`, whose `get_args` is always empty, which would
+    # make every `type[T]` behave like an unparametrised `type`.
+    hint_uw = unwrap(hint)
     if safe_get_origin(hint_uw) is not type:
         # Invalid superhint -> error
         raise TypeError(f"Hint {hint} is not a type[]")
@@ -861,19 +880,22 @@ def unwrap(hint: tx.Any, origin: tx.Any = (tx.Annotated,)) -> tx.Any:
 _unwrap = unwrap  # alias for convenience
 
 
-def _unwrap_typevar(hint: tx.Any, __rentrant: tuple = ()) -> tx.Any:
+def _unwrap_typevar(hint: tx.Any, __reentrant: tuple = ()) -> tx.Any:
     origin = get_origin_uw(hint)
-    if origin in __rentrant:
-        return origin
-    __rentrant += (origin,)
+    if origin in __reentrant:
+        # A cycle (e.g. two typevars defaulting to each other). Returning
+        # the typevar would send `unwrap` straight back in here, so answer
+        # what an uninformative typevar answers.
+        return tx.Any
+    __reentrant += (origin,)
     if not safe_isinstance(origin, tx.TypeVar):
         return hint
     if getattr(origin, "__default__", tx.NoDefault) is not tx.NoDefault:
-        return _unwrap_typevar(origin.__default__, __rentrant=__rentrant)
+        return _unwrap_typevar(origin.__default__, __reentrant=__reentrant)
     if getattr(origin, "__constraints__", ()):
         return tx.Union[origin.__constraints__]
     if getattr(origin, "__bound__", None) is not None:
-        return _unwrap_typevar(origin.__bound__, __rentrant=__rentrant)
+        return _unwrap_typevar(origin.__bound__, __reentrant=__reentrant)
     return tx.Any
 
 
