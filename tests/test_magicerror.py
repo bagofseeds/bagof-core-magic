@@ -8,7 +8,7 @@ import pytest
 import typing_extensions as tx
 
 # locals
-from bagof.core.magic import MagicError, MagicHint, MultipleCauses
+from bagof.core.magic import UNSET, MagicError, MagicHint, MultipleCauses
 
 
 class Magic(MagicHint):
@@ -124,6 +124,51 @@ def test_pickle_round_trip_of_a_subclass() -> None:
     error = MagicError("boom", value=1)
     assert pickle.loads(pickle.dumps(error)).value == 1
     assert issubclass(Custom, MagicError)
+
+
+# --- error() builds, the caller raises --------------------------------
+
+
+def test_error_returns_rather_than_raising() -> None:
+    # The whole family - `error` here, `type_error`/`value_error`
+    # downstream - builds and returns; the caller keeps the `raise`, so
+    # the traceback starts where the failure actually is.
+    magic = Magic()
+    built = magic.error(1, "built")
+    assert isinstance(built, MagicError)
+    assert built.value == 1
+    assert built.message == "built"
+    assert built.this is magic
+
+
+def test_error_is_the_single_override_point() -> None:
+    class CustomError(MagicError):
+        pass
+
+    class CustomMagic(MagicHint):
+        DEFAULT = tx.Any
+
+        def error(
+            self,
+            value: tx.Any = UNSET,
+            message: tx.Optional[str] = None,
+            **kwargs,
+        ) -> MagicError:
+            kwargs.setdefault("type", CustomError)
+            return super().error(value, message, **kwargs)
+
+    built = CustomMagic().error(1, "x")
+    assert isinstance(built, CustomError)
+    with pytest.raises(CustomError):
+        raise built
+
+
+def test_error_accepts_an_explicit_type() -> None:
+    class CustomError(MagicError):
+        pass
+
+    built = Magic().error(1, "x", type=CustomError)
+    assert isinstance(built, CustomError)
 
 
 # --- a hint cannot be reassigned --------------------------------------

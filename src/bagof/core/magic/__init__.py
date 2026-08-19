@@ -274,13 +274,26 @@ class MagicHint(tx.Generic[T]):
         return repr(self)
 
     def error(
-        self, message: str, value: tx.Any = UNSET, **kwargs
+        self, value: tx.Any = UNSET, message: tx.Optional[str] = None,
+        **kwargs
     ) -> "MagicError":
-        """Raise a [`MagicError`][] with the given value and message."""
+        """
+        Build a [`MagicError`][] for the given value and message.
+
+        The error is **returned**, not raised, so that the caller keeps
+        the `raise` and its traceback starts where the failure is:
+
+        ```python
+        raise self.error(value, "Not a valid instance.")
+        ```
+
+        !!! tip
+            Subclasses override this to build their own error type.
+        """
         error_type = kwargs.pop("type", MagicError)
         kwargs.setdefault("this", self)
         kwargs.setdefault("value", value)
-        raise error_type(message, **kwargs)
+        return error_type(message or "", **kwargs)
 
 
 class MultipleCauses(Exception):
