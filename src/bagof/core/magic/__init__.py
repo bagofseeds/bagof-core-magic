@@ -529,6 +529,8 @@ def safe_issubclass(subcls: tx.Any, cls: tx.Any) -> bool:
         False
         ```
     """
+    if isinstance(cls, tuple):
+        return any(safe_issubclass(subcls, c) for c in cls)
     if is_typeddict(cls):
         return cls in _all_orig_bases(subcls) or subcls is dict
     if isinstance(subcls, type) and isinstance(cls, type):
@@ -552,6 +554,8 @@ def safe_isinstance(obj: tx.Any, cls: tx.Any) -> bool:
         False
         ```
     """
+    if isinstance(cls, tuple):
+        return any(safe_isinstance(obj, c) for c in cls)
     if is_typeddict(cls):
         return safe_issubclass(type(obj), cls)
     if isinstance(cls, type) and cls is not tx.Any:
