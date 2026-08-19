@@ -126,45 +126,49 @@ def test_pickle_round_trip_of_a_subclass() -> None:
     assert issubclass(Custom, MagicError)
 
 
-# --- make_error builds, error raises ----------------------------------
+# --- error() builds, the caller raises --------------------------------
 
 
-def test_make_error_returns_and_error_raises() -> None:
-    # The two verbs are distinct, so neither can be mistaken for the
-    # other - `MagicHint.error` used to raise while every subclass
-    # override returned, with the arguments in the opposite order.
+def test_error_returns_rather_than_raising() -> None:
+    # The whole family - `error` here, `type_error`/`value_error`
+    # downstream - builds and returns; the caller keeps the `raise`, so
+    # the traceback starts where the failure actually is.
     magic = Magic()
-    built = magic.make_error(1, "built")
+    built = magic.error(1, "built")
     assert isinstance(built, MagicError)
     assert built.value == 1
     assert built.message == "built"
-
-    with pytest.raises(MagicError) as info:
-        magic.error("raised", 1)
-    assert info.value.value == 1
-    assert info.value.message == "raised"
+    assert built.this is magic
 
 
-def test_error_raises_whatever_make_error_builds() -> None:
+def test_error_is_the_single_override_point() -> None:
     class CustomError(MagicError):
         pass
 
     class CustomMagic(MagicHint):
         DEFAULT = tx.Any
 
-        def make_error(
+        def error(
             self,
             value: tx.Any = UNSET,
             message: tx.Optional[str] = None,
             **kwargs,
         ) -> MagicError:
             kwargs.setdefault("type", CustomError)
-            return super().make_error(value, message, **kwargs)
+            return super().error(value, message, **kwargs)
 
-    # Overriding only `make_error` is enough: `error` is inherited.
-    assert isinstance(CustomMagic().make_error(1, "x"), CustomError)
+    built = CustomMagic().error(1, "x")
+    assert isinstance(built, CustomError)
     with pytest.raises(CustomError):
-        CustomMagic().error("x", 1)
+        raise built
+
+
+def test_error_accepts_an_explicit_type() -> None:
+    class CustomError(MagicError):
+        pass
+
+    built = Magic().error(1, "x", type=CustomError)
+    assert isinstance(built, CustomError)
 
 
 # --- a hint cannot be reassigned --------------------------------------
