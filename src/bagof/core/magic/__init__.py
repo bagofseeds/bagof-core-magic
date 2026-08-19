@@ -472,8 +472,12 @@ def _get_best_match(hint: tx.Any, registry: dict) -> tx.Tuple[tx.Any, float]:
                 # Update best match
                 best_match, best_dist = key, dist
 
-        elif dist < float('inf') and is_typeddict(key):
-            # Prefer typeddict over other types if they are compatible
+        elif dist == best_dist < float("inf") and is_typeddict(key):
+            # Prefer typeddict over other types if they are compatible.
+            # Two guards matter here: the tie (a typeddict key that is
+            # *further* away must not displace a nearer match) and the
+            # finite distance (the initial `best_dist` is infinite, and an
+            # unrelated typeddict key must not win by tying with it).
             best_match, best_dist = key, dist
 
         elif dist == best_dist:
@@ -494,7 +498,11 @@ def _type_dist(subcls: type, cls: type) -> int:
         return float("inf")
     if not safe_issubclass(subcls, cls):
         return float("inf")
-    if tx.is_typeddict(cls):
+    # Our `is_typeddict`, not `tx.is_typeddict`: the latter is False for
+    # `TypedDict` itself, which would send a typeddict subclass down the
+    # `__mro__` branch, where `TypedDict` never appears - so the loop below
+    # would fall through and report the "not found" distance instead of 1.
+    if is_typeddict(cls):
         bases = _all_orig_bases(subcls)
     else:
         bases = subcls.__mro__
