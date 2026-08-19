@@ -734,14 +734,54 @@ def ishintstance(obj: tx.Any, hint: tx.Any) -> bool:
 
     * If `hint` is [`type`][] or [`Type[...]`][tx.Type], checks
       that `obj` is a type and that it is valid subclass of the hint argument.
+    * If `hint` is a [`Literal`][tx.Literal], checks that `obj` is one of
+      its values. The value must match in type as well: `#!python True` is
+      not a valid `#!python Literal[1]`, even though `#!python True == 1`.
+    * If `hint` is a [`Union`][tx.Union], checks `obj` against each of
+      its members.
     * Otherwise, returns `#!python  issubhint(type(obj), hint)`.
+
+    !!! warning
+        A container's **item types are not checked**: a value carries its
+        type, and a type carries no arguments, so `#!python [1, 2]` is a
+        valid `#!python List[str]` as far as this function is concerned.
+        (Python itself refuses `#!python isinstance(x, list[int])` for the
+        same reason.) Checking the items means iterating them, which is
+        the caller's decision to make - `bagof.validators` does it.
+
+    !!! example
+        ```pycon
+        >>> ishintstance(1, int)
+        True
+        >>> ishintstance(1, Literal[1, 2])
+        True
+        >>> ishintstance(bool, Type[int])
+        True
+        ```
     """
     hint = normalise_hint(hint)
+    if hint is tx.Any:
+        return True
+    # Resolve typevars too, so a typevar behaves exactly like the hint it
+    # stands for - the same rule `MagicHint.UNWRAP` documents.
+    hint = unwrap(hint, (tx.Annotated, tx.TypeVar))
+    if hint is tx.Any:
+        return True
     origin_uw = get_origin_uw(hint)
     if origin_uw is type:
         return _ishintstance_type(obj, hint)
     if origin_uw is tx.Literal:
         return _ishintstance_literal(obj, hint)
+    if origin_uw in UNION_TYPES:
+        args = get_args_uw(hint)
+        if args:
+            return any(ishintstance(obj, arg) for arg in args)
+    if isinstance(origin_uw, type):
+        # Only the origin can be checked here: a value carries its type,
+        # and a type carries no arguments - `type([1])` is `list`, never
+        # `List[int]`. Checking the arguments means looking at the items,
+        # which is the caller's business, not an instance check's.
+        return safe_issubclass(type(obj), origin_uw)
     return issubhint(type(obj), hint)
 
 
@@ -781,13 +821,31 @@ def issubhint(hint: tx.Any, superhint: tx.Any) -> bool:
     A hint is a valid subhint if all values that are valid for the hint
     are also valid for the superhint.
 
+    Arguments are compared covariantly, so `#!python List[bool]` is a
+    subhint of `#!python List[int]`. A hint with no arguments is *not* a
+    subhint of one that has them - a bare `#!python list` may hold
+    anything, so it cannot stand in for a `#!python List[int]`.
+
+    !!! note
+        An **unparametrised** `#!python Union` or `#!python Literal` asks
+        a different question: *is this hint one of those?* So
+        `#!python issubhint(int, Union)` is `#!python False` (an
+        `#!python int` is not a union) even though
+        `#!python issubhint(int, Union[int, str])` is `#!python True`.
+        This makes them usable as a `#!python BOUND`, and it is why the
+        relation is not transitive through a bare `#!python Union`.
+
     !!! example
         ```pycon
-        >>> from typing import Union
+        >>> from typing import List, Union
         >>> issubhint(bool, int)
         True
         >>> issubhint(Union[int, str], Union[int, str, bytes])
         True
+        >>> issubhint(List[bool], List[int])
+        True
+        >>> issubhint(list, List[int])  # a bare list may hold anything
+        False
         >>> issubhint(int, str)
         False
         ```
@@ -845,9 +903,58 @@ def issubhint(hint: tx.Any, superhint: tx.Any) -> bool:
         return _issubtype(hint, superhint)
 
     if isinstance(origin_uw, type):
-        return safe_issubclass(hint, origin_uw)
+        return _issubclasshint(hint, superhint, origin_uw)
 
     return False
+
+
+def _issubclasshint(hint: tx.Any, superhint: tx.Any, origin: type) -> bool:
+    """Check that a hint is a sub-hint for a hint whose origin is a class."""
+    # Compare origins, not the hints themselves: a parametrised alias
+    # (`List[int]`) and an `Annotated` wrapper are not instances of
+    # `type`, so handing either to `safe_issubclass` directly would
+    # answer False for every one of them.
+    hint_uw = unwrap(hint)
+    if not safe_issubclass(get_origin_uw(hint_uw), origin):
+        return False
+
+    superargs = safe_get_args(unwrap(superhint))
+    if not superargs:
+        # An unparametrised superhint constrains nothing further.
+        return True
+
+    args = safe_get_args(hint_uw)
+    if not args:
+        # `list` cannot stand in for `List[int]`: it may hold anything.
+        return False
+
+    return _issubargs(args, superargs)
+
+
+def _issubargs(
+    args: tx.Tuple[tx.Any, ...], superargs: tx.Tuple[tx.Any, ...]
+) -> bool:
+    """Check a hint's arguments against a superhint's, covariantly."""
+    # A trailing ellipsis (`Tuple[int, ...]`, `Callable[..., int]`) means
+    # "any number of these", so it does not line up positionally.
+    if Ellipsis in superargs or Ellipsis in args:
+        if Ellipsis not in superargs:
+            return False
+        if Ellipsis not in args:
+            # Every argument must satisfy the repeated one.
+            head = tuple(a for a in superargs if a is not Ellipsis)
+            return len(head) == 1 and all(
+                issubhint(arg, head[0]) for arg in args
+            )
+        args = tuple(a for a in args if a is not Ellipsis)
+        superargs = tuple(a for a in superargs if a is not Ellipsis)
+
+    if len(args) != len(superargs):
+        return False
+
+    return all(
+        issubhint(arg, superarg) for arg, superarg in zip(args, superargs)
+    )
 
 
 def _issubnone(hint: tx.Any, superhint: tx.Any) -> bool:

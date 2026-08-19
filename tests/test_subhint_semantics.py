@@ -12,6 +12,8 @@ from bagof.core.magic import (
     normalise_hint,
 )
 
+# --- covariant argument comparison -------------------------------------
+
 ARG_CASES = [
     # A parametrised hint is a subhint of its own origin.
     (tx.List[int], list, True),
@@ -43,6 +45,25 @@ ARG_CASES = [
     (tx.Tuple[str, int], tx.Tuple[int, ...], False),
     (tx.Tuple[int, ...], tx.Tuple[int, ...], True),
 ]
+
+
+@pytest.mark.parametrize(
+    "hint,superhint,expected",
+    ARG_CASES,
+    ids=[f"{h}<:{s}" for h, s, _ in ARG_CASES],
+)
+def test_issubhint_compares_arguments(
+    hint: tx.Any, superhint: tx.Any, expected: bool
+) -> None:
+    assert issubhint(hint, superhint) is expected
+
+
+def test_no_unsound_widening() -> None:
+    # Every one of these used to be True, and each admits values the
+    # superhint rejects.
+    assert issubhint(list, tx.List[int]) is False
+    assert issubhint(dict, tx.Dict[str, int]) is False
+    assert issubhint(tx.Any, tx.Union[int, str]) is False
 
 
 # --- the bare Union / Literal forms are structural ---------------------
@@ -150,6 +171,32 @@ def test_a_none_inside_a_hint_keeps_its_value_meaning() -> None:
     # `Literal[None]` is the *value* None, not the type.
     assert ishintstance(None, tx.Literal[None]) is True
     assert ishintstance(0, tx.Literal[None]) is False
+
+
+# --- ishintstance does not check item types ---------------------------
+
+
+def test_item_types_are_not_checked() -> None:
+    # A value carries its type; a type carries no arguments. Python
+    # refuses `isinstance(x, list[int])` for the same reason.
+    assert ishintstance([1, 2], tx.List[str]) is True
+    assert ishintstance([1, 2], tx.List[int]) is True
+    # The origin still is checked.
+    assert ishintstance((1, 2), tx.List[int]) is False
+
+
+def test_ishintstance_resolves_typevars_and_any() -> None:
+    bound = tx.TypeVar("bound", bound=tx.Sequence[int])
+    assert ishintstance([1, 2], bound) is True
+    assert ishintstance(1, bound) is False
+    assert ishintstance(1, tx.TypeVar("free")) is True
+    assert ishintstance(1, tx.Any) is True
+
+
+def test_ishintstance_unions_check_each_member() -> None:
+    assert ishintstance([1], tx.Union[tx.List[int], str]) is True
+    assert ishintstance("a", tx.Union[tx.List[int], str]) is True
+    assert ishintstance(1, tx.Union[tx.List[int], str]) is False
 
 
 # --- get_concrete_type takes the first constraint ---------------------
