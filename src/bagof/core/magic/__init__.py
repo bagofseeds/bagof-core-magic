@@ -565,10 +565,14 @@ def safe_issubclass(subcls: tx.Any, cls: tx.Any) -> bool:
         ```pycon
         >>> safe_issubclass(bool, int)
         True
+        >>> safe_issubclass(bool, (str, int))  # a tuple, like `issubclass`
+        True
         >>> safe_issubclass(int, "not a type")  # no error
         False
         ```
     """
+    if isinstance(cls, tuple):
+        return any(safe_issubclass(subcls, each) for each in cls)
     if is_typeddict(cls):
         return cls in _all_orig_bases(subcls) or subcls is dict
     if isinstance(subcls, type) and isinstance(cls, type):
@@ -588,10 +592,14 @@ def safe_isinstance(obj: tx.Any, cls: tx.Any) -> bool:
         ```pycon
         >>> safe_isinstance(1, int)
         True
+        >>> safe_isinstance(1, (str, int))  # a tuple, like `isinstance`
+        True
         >>> safe_isinstance(1, "not a type")  # no error
         False
         ```
     """
+    if isinstance(cls, tuple):
+        return any(safe_isinstance(obj, each) for each in cls)
     if is_typeddict(cls):
         return safe_issubclass(type(obj), cls)
     if isinstance(cls, type) and cls is not tx.Any:
