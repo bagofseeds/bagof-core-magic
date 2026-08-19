@@ -18,9 +18,14 @@ __all__ = [
     "issubclassable",
     "issubscriptable",
     "is_typeddict",
+    "type2hint",
     "unwrap",
+    "Unset",
     "UNSET",
+    "NoneType",
+    "REAL_TYPES",
     "UNION_TYPES",
+    "UnionType",
 ]
 
 # stdlib
@@ -34,8 +39,9 @@ import typing_extensions as tx
 
 # optionals
 if tx.TYPE_CHECKING:
-    import numpy as np
-    from typing_extensions import NoneType, UnionType
+    from types import NoneType, UnionType
+
+    import numpy as _np
 else:
     try:
         from types import NoneType, UnionType
@@ -44,16 +50,23 @@ else:
         UnionType = tx.Union
 
     try:
-        import numpy as np
+        import numpy as _np
     except ImportError:
-        np = None
+        _np = None
 
 # typing
 T = tx.TypeVar("T", covariant=True)
 
 # constants
-UNION_TYPES = (tx.Union, UnionType)
-REAL_TYPES = (numbers.Real, np.floating) if np is not None else (numbers.Real,)
+UNION_TYPES = (
+    (tx.Union,) if UnionType is tx.Union else (tx.Union, UnionType)
+)
+"""The union spellings this package understands."""
+
+REAL_TYPES = (
+    (numbers.Real, _np.floating) if _np is not None else (numbers.Real,)
+)
+"""The real-number types [`eq_safenan`][] recognises."""
 
 
 class Unset:
