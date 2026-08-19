@@ -3,6 +3,11 @@ __all__ = [
     "MagicError",
     "MagicHint",
     "MultipleCauses",
+    "NoneType",
+    "REAL_TYPES",
+    "T",
+    "UnionType",
+    "Unset",
     "eq_safenan",
     "get_concrete_type",
     "get_default",
@@ -18,6 +23,7 @@ __all__ = [
     "issubclassable",
     "issubscriptable",
     "is_typeddict",
+    "type2hint",
     "unwrap",
     "UNSET",
     "UNION_TYPES",
@@ -34,7 +40,7 @@ import typing_extensions as tx
 
 # optionals
 if tx.TYPE_CHECKING:
-    import numpy as np
+    import numpy as _np
     from typing_extensions import NoneType, UnionType
 else:
     try:
@@ -44,16 +50,16 @@ else:
         UnionType = tx.Union
 
     try:
-        import numpy as np
+        import numpy as _np
     except ImportError:
-        np = None
+        _np = None
 
 # typing
 T = tx.TypeVar("T", covariant=True)
 
 # constants
 UNION_TYPES = (tx.Union, UnionType)
-REAL_TYPES = (numbers.Real, np.floating) if np is not None else (numbers.Real,)
+REAL_TYPES = (numbers.Real, _np.floating) if _np is not None else (numbers.Real,)
 
 
 class Unset:
