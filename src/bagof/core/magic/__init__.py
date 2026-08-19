@@ -580,6 +580,9 @@ def safe_issubclass(subcls: tx.Any, cls: tx.Any) -> bool:
     !!! warning
         If `cls` is a [`TypedDict`][tx.TypedDict], this function looks
         at `subcls`'s `__orig_bases__`, instead of its `__bases__`.
+        A plain [`dict`][] is *not* a subclass of a
+        [`TypedDict`][tx.TypedDict] - the relation only holds the other
+        way round.
 
     !!! example
         ```pycon
@@ -594,7 +597,7 @@ def safe_issubclass(subcls: tx.Any, cls: tx.Any) -> bool:
     if isinstance(cls, tuple):
         return any(safe_issubclass(subcls, each) for each in cls)
     if is_typeddict(cls):
-        return cls in _all_orig_bases(subcls) or subcls is dict
+        return cls in _all_orig_bases(subcls)
     if isinstance(subcls, type) and isinstance(cls, type):
         return issubclass(subcls, cls)
     return False
@@ -605,8 +608,11 @@ def safe_isinstance(obj: tx.Any, cls: tx.Any) -> bool:
     Safe isinstance (does not fail if second argument is not a type).
 
     !!! warning
-        If `cls` is a [`TypedDict`][tx.TypedDict], this function looks
-        at the `obj`'s `__orig_bases__`, instead of its `__bases__`.
+        A [`TypedDict`][tx.TypedDict] cannot be instance-checked. Python
+        refuses `#!python isinstance(value, SomeTypedDict)` outright, and
+        a TypedDict leaves no trace on the dict it describes, so there is
+        nothing to recognise at runtime. This function therefore answers
+        [`False`][] for one; validate the *shape* of the dict instead.
 
     !!! example
         ```pycon
