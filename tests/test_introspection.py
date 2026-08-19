@@ -11,6 +11,7 @@ from bagof.core.magic import (
     get_default,
     get_from_registry,
     ishintstance,
+    issubclassable,
     safe_isinstance,
     safe_issubclass,
     unwrap,
@@ -220,3 +221,17 @@ def test_dict_is_not_a_subclass_of_a_typeddict() -> None:
 
 def test_a_bare_dict_hint_does_not_resolve_to_a_typeddict_entry() -> None:
     assert get_from_registry(dict, {Base: "typeddict"}) is None
+
+
+# --- Any is never type-like -------------------------------------------
+
+
+def test_any_is_not_subclassable_on_any_version() -> None:
+    # `typing.Any` became a class in 3.11, so `isinstance(Any, type)`
+    # answers differently across the versions this package supports.
+    # Pin the answer instead of inheriting it.
+    assert issubclassable(tx.Any) is False
+    assert safe_issubclass(tx.Any, object) is False
+    assert safe_issubclass(int, tx.Any) is False
+    assert _type_dist(tx.Any, object) == float("inf")
+    assert get_from_registry(tx.Any, {object: "any"}) is None

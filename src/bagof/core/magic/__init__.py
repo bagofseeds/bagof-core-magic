@@ -69,6 +69,24 @@ REAL_TYPES = (
 )
 """The real-number types [`eq_safenan`][] recognises."""
 
+_SPECIAL_FORMS = (tx.Any, tx.Optional, tx.Literal) + UNION_TYPES
+"""
+The typing constructs that must never be treated as classes.
+
+Several of these *are* classes on some Python versions and not on others
+- [`Any`][typing.Any] became one in 3.11, and [`Union`][typing.Union]
+became one in 3.14, when it merged with
+[`types.UnionType`][] - so `#!python isinstance(hint, type)` silently
+gives different answers across the versions this package supports. Pin
+the answer instead of inheriting it.
+"""
+
+
+def _is_special_form(hint: tx.Any) -> bool:
+    """Whether a hint is a typing construct rather than a class."""
+    # Identity, not `in`: `==` on typing objects can be surprising.
+    return any(hint is form for form in _SPECIAL_FORMS)
+
 
 class Unset:
 
@@ -389,7 +407,7 @@ def get_concrete_type(hint: tx.Any, fallback: type = UNSET) -> tx.Type[tx.Any]:
     * A [`TypeError`][] is raised.
     """
     origin = safe_get_origin(hint, unwrap=(tx.Annotated, tx.TypeVar))
-    if safe_isinstance(origin, type) and not inspect.isabstract(origin):
+    if _is_concrete_type(origin):
         return origin
     if safe_isinstance(fallback, type):
         return fallback
@@ -397,6 +415,15 @@ def get_concrete_type(hint: tx.Any, fallback: type = UNSET) -> tx.Type[tx.Any]:
         f"Cannot get concrete type for hint {hint} (of type {type(hint)}) "
         f"and fallback {fallback} (of type {type(fallback)})."
     )
+
+
+def _is_concrete_type(hint: tx.Any) -> bool:
+    """Whether a hint is a class that can actually be instantiated."""
+    if _is_special_form(hint):
+        # `Union` is a class from python 3.14 on, but instantiating it
+        # is still meaningless.
+        return False
+    return safe_isinstance(hint, type) and not inspect.isabstract(hint)
 
 
 def get_default(hint: tx.Any) -> tx.Any:
@@ -542,7 +569,16 @@ def issubclassable(cls: tx.Any) -> bool:
         This function differs from `#!python isinstance(cls, type)` in that it
         returns [`True`][] for [`TypedDict`][tx.TypedDict] and its subclasses,
         even though they are not technically types.
+
+    !!! note
+        A typing construct - [`Any`][typing.Any], [`Union`][typing.Union],
+        [`Literal`][typing.Literal] - is never subclassable, on any Python
+        version. Some of them *are* classes on recent Pythons (`Any` from
+        3.11, `Union` from 3.14), so `#!python isinstance(hint, type)`
+        answers differently across the versions this package supports.
     """
+    if _is_special_form(cls):
+        return False
     if cls is tx.TypedDict:
         return True
     return isinstance(cls, type)
@@ -598,6 +634,11 @@ def safe_issubclass(subcls: tx.Any, cls: tx.Any) -> bool:
         return any(safe_issubclass(subcls, each) for each in cls)
     if is_typeddict(cls):
         return cls in _all_orig_bases(subcls)
+    if _is_special_form(cls) or _is_special_form(subcls):
+        # A typing construct may be a real class on a recent Python
+        # (`Any` from 3.11, `Union` from 3.14), so `issubclass` would
+        # answer it - differently than on the versions before.
+        return False
     if isinstance(subcls, type) and isinstance(cls, type):
         return issubclass(subcls, cls)
     return False
