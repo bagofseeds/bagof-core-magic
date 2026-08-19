@@ -740,7 +740,21 @@ def ishintstance(obj: tx.Any, hint: tx.Any) -> bool:
     origin_uw = get_origin_uw(hint)
     if origin_uw is type:
         return _ishintstance_type(obj, hint)
+    if origin_uw is tx.Literal:
+        return _ishintstance_literal(obj, hint)
     return issubhint(type(obj), hint)
+
+
+def _ishintstance_literal(obj: tx.Any, hint: tx.Any) -> bool:
+    """Check that a value is one of a `Literal`'s values."""
+    # Both the type and the value must match. Python compares `True == 1`
+    # and `1 == 1.0` as equal, but PEP 586 makes literal matching
+    # type-aware, so `Literal[1]` must reject `True` and `1.0`.
+    # `eq_safenan` keeps a NaN literal comparable with itself.
+    return any(
+        type(arg) is type(obj) and eq_safenan(arg) == eq_safenan(obj)
+        for arg in get_args_uw(hint)
+    )
 
 
 def _ishintstance_type(obj: tx.Any, hint: tx.Any) -> bool:
