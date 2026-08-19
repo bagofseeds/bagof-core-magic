@@ -7,7 +7,9 @@ import typing_extensions as tx
 # locals
 from bagof.core.magic import (
     get_concrete_type,
+    ishintstance,
     issubhint,
+    normalise_hint,
 )
 
 ARG_CASES = [
@@ -79,6 +81,37 @@ def test_a_constrained_typevar_is_the_union_it_stands_for() -> None:
     assert issubhint(constrained, tx.Union) is True
     assert issubhint(constrained, tx.Union[int, str, bytes]) is True
     assert issubhint(constrained, tx.Union[int, bytes]) is False
+
+
+# --- None is NoneType --------------------------------------------------
+
+
+def test_normalise_hint_replaces_a_bare_none() -> None:
+    assert normalise_hint(None) is type(None)
+    assert normalise_hint(int) is int
+
+
+@pytest.mark.parametrize(
+    "hint,superhint,expected",
+    [
+        (None, type(None), True),
+        (type(None), None, True),
+        (None, None, True),
+        (int, None, False),
+        (None, int, False),
+        (None, tx.Optional[int], True),
+    ],
+)
+def test_none_is_nonetype_as_a_hint(
+    hint: tx.Any, superhint: tx.Any, expected: bool
+) -> None:
+    assert issubhint(hint, superhint) is expected
+
+
+def test_none_is_nonetype_for_instance_checks() -> None:
+    assert ishintstance(None, None) is True
+    assert ishintstance(None, type(None)) is True
+    assert ishintstance(1, None) is False
 
 
 # --- get_concrete_type takes the first constraint ---------------------
