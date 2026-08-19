@@ -73,7 +73,9 @@ REAL_TYPES = (
 class Unset:
 
     def __new__(cls, *args, **kwargs) -> tx.Self:
-        if not hasattr(cls, "_INSTANCE"):
+        # `cls.__dict__`, not `hasattr`: the latter finds an inherited
+        # `_INSTANCE`, so a subclass would hand back the base's instance.
+        if "_INSTANCE" not in cls.__dict__:
             cls._INSTANCE = object.__new__(cls)
         return cls._INSTANCE
 
@@ -223,7 +225,11 @@ class MagicHint(tx.Generic[T]):
         )
 
     def __repr__(self) -> str:
-        hint_arg = self.hint if self.hint != self.DEFAULT else ""
+        # `is not`, not `!=`: a hint with a custom `__eq__` (a numpy-based
+        # hint, say) would otherwise make `repr` raise - inside error
+        # formatting, of all places. Typing caches its aliases, so
+        # identity holds for the hints this compares.
+        hint_arg = self.hint if self.hint is not self.DEFAULT else ""
         return f"{type(self).__name__}({hint_arg})"
 
     def __str__(self) -> str:
@@ -233,10 +239,10 @@ class MagicHint(tx.Generic[T]):
         self, message: str, value: tx.Any = UNSET, **kwargs
     ) -> "MagicError":
         """Raise a [`MagicError`][] with the given value and message."""
-        type = kwargs.pop("type", MagicError)
+        error_type = kwargs.pop("type", MagicError)
         kwargs.setdefault("this", self)
         kwargs.setdefault("value", value)
-        raise type(message, **kwargs)
+        raise error_type(message, **kwargs)
 
 
 class MultipleCauses(Exception):
@@ -502,7 +508,7 @@ def _get_best_match(hint: tx.Any, registry: dict) -> tx.Tuple[tx.Any, float]:
     return best_match, best_dist
 
 
-def _type_dist(subcls: type, cls: type) -> int:
+def _type_dist(subcls: type, cls: type) -> float:
     """Distance between two types, based on their inheritance hierarchy."""
     if safe_isinstance(subcls, tx.TypeVar):
         subcls = tx.TypeVar
@@ -685,7 +691,7 @@ def issubhint(hint: tx.Any, superhint: tx.Any) -> bool:
         return True
 
     if isinstance(origin_uw, tx.TypeVar):
-        return _isubtypevar(hint, superhint)
+        return _issubtypevar(hint, superhint)
 
     if isinstance(hint, tx.TypeVar):
         # Unwrap typevar so that its bound can be checked against the
@@ -756,7 +762,7 @@ def _issubliteral(hint: tx.Any, superhint: tx.Any) -> bool:
     return all(arg in superargs for arg in args)
 
 
-def _isubtypevar(hint: tx.Any, superhint: tx.TypeVar) -> bool:
+def _issubtypevar(hint: tx.Any, superhint: tx.TypeVar) -> bool:
     """Check that a hint is a sub-hint for a TypeVar."""
     hint_uw = unwrap(hint)
     superhint_uw = unwrap(superhint)
@@ -866,8 +872,9 @@ def unwrap(hint: tx.Any, origin: tx.Any = (tx.Annotated,)) -> tx.Any:
     """
     Unwrap a type hint from its origin, if it is in the unwrap list.
 
-    If [`TypeVar`][typing.TypeVar] is one of the origins to unwrap, it will be
-    unwrapped to its default, bound, or (union of) constraints.
+    If [`TypeVar`][typing.TypeVar] is one of the origins to unwrap, it will
+    be unwrapped to its default, its (union of) constraints, or its bound -
+    in that order.
 
     !!! example
         ```pycon
@@ -882,7 +889,8 @@ def unwrap(hint: tx.Any, origin: tx.Any = (tx.Annotated,)) -> tx.Any:
     """
     if origin is None:
         origin = ()
-    if not isinstance(origin, abc.Sequence):
+    if isinstance(origin, str) or not isinstance(origin, abc.Sequence):
+        # A `str` is a `Sequence`, but a single hint - not a list of them.
         origin = (origin,)
     if safe_get_origin(hint) in origin:
         return unwrap(tx.get_args(hint)[0], origin=origin)

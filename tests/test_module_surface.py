@@ -12,8 +12,12 @@ import typing_extensions as tx
 import bagof.core.magic as magic
 from bagof.core.magic import (
     UNION_TYPES,
+    UNSET,
+    MagicHint,
+    Unset,
     eq_safenan,
     type2hint,
+    unwrap,
 )
 
 # --- the public surface ------------------------------------------------
@@ -53,6 +57,25 @@ def test_type_checking_shim_names_come_from_types() -> None:
     assert not hasattr(tx, "NoneType")
     assert not hasattr(tx, "UnionType")
     assert magic.NoneType is type(None)
+
+
+# --- Unset -------------------------------------------------------------
+
+
+def test_unset_is_a_singleton() -> None:
+    assert Unset() is UNSET
+    assert not UNSET
+
+
+def test_unset_subclass_gets_its_own_instance() -> None:
+    # Regression: `hasattr(cls, "_INSTANCE")` found the attribute
+    # inherited from `Unset`, so a subclass handed back the base instance.
+    class OtherUnset(Unset):
+        pass
+
+    assert isinstance(OtherUnset(), OtherUnset)
+    assert OtherUnset() is OtherUnset()
+    assert OtherUnset() is not UNSET
 
 
 # --- eq_safenan --------------------------------------------------------
@@ -100,3 +123,30 @@ def test_type2hint_maps_camel_cased_aliases(cls: type, name: str) -> None:
     # (they need no alias), which is what happens from Python 3.9 on.
     expected = cls if magic.issubscriptable(cls) else getattr(tx, name)
     assert type2hint(cls) is expected
+
+
+# --- unwrap ------------------------------------------------------------
+
+
+def test_unwrap_accepts_a_single_string_origin() -> None:
+    # Regression: `str` passes the `Sequence` check, so a lone string was
+    # not wrapped in a tuple and the `in` test raised TypeError.
+    hint = tx.Annotated[int, "meta"]
+    assert unwrap(hint, "Annotated") == hint
+
+
+# --- MagicHint.__repr__ ------------------------------------------------
+
+
+def test_repr_does_not_compare_hints_with_eq() -> None:
+    # Regression: `!=` made `repr` raise for a hint with a custom
+    # `__eq__` - and `repr` is called during error formatting.
+    class Uncomparable:
+        def __eq__(self, other: tx.Any) -> bool:
+            raise RuntimeError("this hint refuses to be compared")
+
+    class Magic(MagicHint):
+        DEFAULT = tx.Any
+
+    assert isinstance(repr(Magic(Uncomparable())), str)
+    assert repr(Magic()) == "Magic()"
