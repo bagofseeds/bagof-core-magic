@@ -18,12 +18,18 @@ __all__ = [
     "issubclassable",
     "issubscriptable",
     "is_typeddict",
+    "type2hint",
     "unwrap",
+    "Unset",
     "UNSET",
+    "NoneType",
+    "REAL_TYPES",
     "UNION_TYPES",
+    "UnionType",
 ]
 
 # stdlib
+import collections
 import inspect
 import math
 import numbers
@@ -34,8 +40,9 @@ import typing_extensions as tx
 
 # optionals
 if tx.TYPE_CHECKING:
-    import numpy as np
-    from typing_extensions import NoneType, UnionType
+    from types import NoneType, UnionType
+
+    import numpy as _np
 else:
     try:
         from types import NoneType, UnionType
@@ -44,22 +51,31 @@ else:
         UnionType = tx.Union
 
     try:
-        import numpy as np
+        import numpy as _np
     except ImportError:
-        np = None
+        _np = None
 
 # typing
 T = tx.TypeVar("T", covariant=True)
 
 # constants
-UNION_TYPES = (tx.Union, UnionType)
-REAL_TYPES = (numbers.Real, np.floating) if np is not None else (numbers.Real,)
+UNION_TYPES = (
+    (tx.Union,) if UnionType is tx.Union else (tx.Union, UnionType)
+)
+"""The union spellings this package understands."""
+
+REAL_TYPES = (
+    (numbers.Real, _np.floating) if _np is not None else (numbers.Real,)
+)
+"""The real-number types [`eq_safenan`][] recognises."""
 
 
 class Unset:
 
     def __new__(cls, *args, **kwargs) -> tx.Self:
-        if not hasattr(cls, "_INSTANCE"):
+        # `cls.__dict__`, not `hasattr`: the latter finds an inherited
+        # `_INSTANCE`, so a subclass would hand back the base's instance.
+        if "_INSTANCE" not in cls.__dict__:
             cls._INSTANCE = object.__new__(cls)
         return cls._INSTANCE
 
@@ -209,7 +225,11 @@ class MagicHint(tx.Generic[T]):
         )
 
     def __repr__(self) -> str:
-        hint_arg = self.hint if self.hint != self.DEFAULT else ""
+        # `is not`, not `!=`: a hint with a custom `__eq__` (a numpy-based
+        # hint, say) would otherwise make `repr` raise - inside error
+        # formatting, of all places. Typing caches its aliases, so
+        # identity holds for the hints this compares.
+        hint_arg = self.hint if self.hint is not self.DEFAULT else ""
         return f"{type(self).__name__}({hint_arg})"
 
     def __str__(self) -> str:
@@ -219,10 +239,10 @@ class MagicHint(tx.Generic[T]):
         self, message: str, value: tx.Any = UNSET, **kwargs
     ) -> "MagicError":
         """Raise a [`MagicError`][] with the given value and message."""
-        type = kwargs.pop("type", MagicError)
+        error_type = kwargs.pop("type", MagicError)
         kwargs.setdefault("this", self)
         kwargs.setdefault("value", value)
-        raise type(message, **kwargs)
+        raise error_type(message, **kwargs)
 
 
 class MultipleCauses(Exception):
@@ -488,7 +508,7 @@ def _get_best_match(hint: tx.Any, registry: dict) -> tx.Tuple[tx.Any, float]:
     return best_match, best_dist
 
 
-def _type_dist(subcls: type, cls: type) -> int:
+def _type_dist(subcls: type, cls: type) -> float:
     """Distance between two types, based on their inheritance hierarchy."""
     if safe_isinstance(subcls, tx.TypeVar):
         subcls = tx.TypeVar
@@ -671,7 +691,7 @@ def issubhint(hint: tx.Any, superhint: tx.Any) -> bool:
         return True
 
     if isinstance(origin_uw, tx.TypeVar):
-        return _isubtypevar(hint, superhint)
+        return _issubtypevar(hint, superhint)
 
     if isinstance(hint, tx.TypeVar):
         # Unwrap typevar so that its bound can be checked against the
@@ -742,7 +762,7 @@ def _issubliteral(hint: tx.Any, superhint: tx.Any) -> bool:
     return all(arg in superargs for arg in args)
 
 
-def _isubtypevar(hint: tx.Any, superhint: tx.TypeVar) -> bool:
+def _issubtypevar(hint: tx.Any, superhint: tx.TypeVar) -> bool:
     """Check that a hint is a sub-hint for a TypeVar."""
     hint_uw = unwrap(hint)
     superhint_uw = unwrap(superhint)
@@ -852,8 +872,9 @@ def unwrap(hint: tx.Any, origin: tx.Any = (tx.Annotated,)) -> tx.Any:
     """
     Unwrap a type hint from its origin, if it is in the unwrap list.
 
-    If [`TypeVar`][typing.TypeVar] is one of the origins to unwrap, it will be
-    unwrapped to its default, bound, or (union of) constraints.
+    If [`TypeVar`][typing.TypeVar] is one of the origins to unwrap, it will
+    be unwrapped to its default, its (union of) constraints, or its bound -
+    in that order.
 
     !!! example
         ```pycon
@@ -868,7 +889,8 @@ def unwrap(hint: tx.Any, origin: tx.Any = (tx.Annotated,)) -> tx.Any:
     """
     if origin is None:
         origin = ()
-    if not isinstance(origin, abc.Sequence):
+    if isinstance(origin, str) or not isinstance(origin, abc.Sequence):
+        # A `str` is a `Sequence`, but a single hint - not a list of them.
         origin = (origin,)
     if safe_get_origin(hint) in origin:
         return unwrap(tx.get_args(hint)[0], origin=origin)
@@ -950,18 +972,41 @@ def get_args_uw(hint: tx.Any) -> tx.Tuple[tx.Any, ...]:
     return safe_get_args(hint, unwrap=tx.Annotated)
 
 
-def eq_safenan(x: tx.Any) -> bool:
+class _NaN:
+    """The value every real NaN is mapped to by [`eq_safenan`][]."""
+
+    def __repr__(self) -> str:
+        return "<NaN>"
+
+
+_NAN = _NaN()
+
+
+def eq_safenan(x: tx.Any) -> tx.Any:
     """
     Map a value to a form that compares equal across NaNs.
 
     Since `#!python float("nan") != float("nan")`, comparing values that
     may contain NaN with `==` is unsafe. Apply this function to both
-    operands before comparing them: real NaN values are mapped to the
-    string `"NaN"` (so that two NaNs compare equal), while every other
-    value is returned unchanged.
+    operands before comparing them: real NaN values are all mapped to one
+    sentinel (so that two NaNs compare equal), while every other value is
+    returned unchanged.
+
+    !!! note
+        Only real numbers are recognised. A complex NaN is returned
+        unchanged, and so still compares unequal to itself.
+
+    !!! example
+        ```pycon
+        >>> nan = float("nan")
+        >>> nan == nan
+        False
+        >>> eq_safenan(nan) == eq_safenan(nan)
+        True
+        ```
     """
     if isinstance(x, REAL_TYPES) and math.isnan(x):
-        return "NaN"
+        return _NAN
     return x
 
 
@@ -979,6 +1024,60 @@ def issubscriptable(x: tx.Any) -> bool:
     return False
 
 
+_TYPE2HINT_NAMES = (
+    (dict, "Dict"),
+    (frozenset, "FrozenSet"),
+    (list, "List"),
+    (set, "Set"),
+    (tuple, "Tuple"),
+    (type, "Type"),
+    (abc.Callable, "Callable"),
+    (abc.Container, "Container"),
+    (abc.Coroutine, "Coroutine"),
+    (abc.Generator, "Generator"),
+    (abc.Hashable, "Hashable"),
+    (abc.ItemsView, "ItemsView"),
+    (abc.Iterable, "Iterable"),
+    (abc.Iterator, "Iterator"),
+    (abc.KeysView, "KeysView"),
+    (abc.Mapping, "Mapping"),
+    (abc.MappingView, "MappingView"),
+    (abc.MutableMapping, "MutableMapping"),
+    (abc.MutableSequence, "MutableSequence"),
+    (abc.MutableSet, "MutableSet"),
+    (abc.Reversible, "Reversible"),
+    (abc.Sequence, "Sequence"),
+    (abc.Set, "AbstractSet"),
+    (abc.Sized, "Sized"),
+    (abc.ValuesView, "ValuesView"),
+    (collections.ChainMap, "ChainMap"),
+    (collections.Counter, "Counter"),
+    (collections.OrderedDict, "OrderedDict"),
+    (collections.defaultdict, "DefaultDict"),
+    (collections.deque, "Deque"),
+)
+"""
+The type hint each non-subscriptable type maps to, by name.
+
+An explicit table, rather than deriving the name from the type's own: the
+capitalisation does not follow (`defaultdict` becomes `DefaultDict`,
+`frozenset` becomes `FrozenSet`, `abc.Set` becomes `AbstractSet`).
+"""
+
+_TYPE2HINT = {
+    cls: getattr(tx, name)
+    for cls, name in _TYPE2HINT_NAMES
+    if hasattr(tx, name)
+}
+"""
+[`_TYPE2HINT_NAMES`][], resolved against the running `typing_extensions`.
+
+Entries whose hint the running version does not provide (`ByteString`
+was removed, for example) are simply left out, so the type is returned
+unchanged rather than raising at import time.
+"""
+
+
 def type2hint(x: tx.Any) -> tx.Any:
     """
     Convert a type to a (subscriptable) type hint.
@@ -988,16 +1087,19 @@ def type2hint(x: tx.Any) -> tx.Any:
       For example, in python 3.8, `#!python type2hint(list)` returns
       [`typing.List`][tx.List].
     * Otherwise, the value is returned as is.
+
+    !!! example
+        ```pycon
+        >>> type2hint(frozenset)
+        typing.FrozenSet
+        >>> type2hint(3)  # not a type, so unchanged
+        3
+        ```
     """
     if issubscriptable(x):
         return x
-
-    # Look for a type hint with the same name as the type
-    name = x.__name__.split(".")[-1]
-    name = name.capitalize()
-    if hasattr(tx, name):
-        # Type / List / Tuple / ...
-        return getattr(tx, name)
-
-    # Otherwise, return the value as is
-    return x
+    try:
+        return _TYPE2HINT.get(x, x)
+    except TypeError:
+        # Unhashable: cannot be a key, so there is nothing to look up.
+        return x
