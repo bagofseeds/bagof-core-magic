@@ -83,6 +83,38 @@ def test_a_constrained_typevar_is_the_union_it_stands_for() -> None:
     assert issubhint(constrained, tx.Union[int, bytes]) is False
 
 
+# --- Literal instance checks (PEP 586) ---------------------------------
+
+
+@pytest.mark.parametrize(
+    "obj,hint,expected",
+    [
+        (1, tx.Literal[1, 2], True),
+        (3, tx.Literal[1, 2], False),
+        ("a", tx.Literal["a"], True),
+        ("b", tx.Literal["a"], False),
+        # PEP 586 makes literal matching type-aware, so `True == 1` does
+        # not make `True` a valid `Literal[1]`.
+        (True, tx.Literal[1], False),
+        (1, tx.Literal[True], False),
+        (True, tx.Literal[True], True),
+        (1.0, tx.Literal[1], False),
+        # `Annotated` is transparent here too.
+        (1, tx.Annotated[tx.Literal[1], "meta"], True),
+        (None, tx.Literal[None], True),
+    ],
+)
+def test_ishintstance_literal(
+    obj: tx.Any, hint: tx.Any, expected: bool
+) -> None:
+    assert ishintstance(obj, hint) is expected
+
+
+def test_a_nan_literal_matches_itself() -> None:
+    nan = float("nan")
+    assert ishintstance(nan, tx.Literal[nan]) is True
+
+
 # --- None is NoneType --------------------------------------------------
 
 
@@ -112,6 +144,12 @@ def test_none_is_nonetype_for_instance_checks() -> None:
     assert ishintstance(None, None) is True
     assert ishintstance(None, type(None)) is True
     assert ishintstance(1, None) is False
+
+
+def test_a_none_inside_a_hint_keeps_its_value_meaning() -> None:
+    # `Literal[None]` is the *value* None, not the type.
+    assert ishintstance(None, tx.Literal[None]) is True
+    assert ishintstance(0, tx.Literal[None]) is False
 
 
 # --- get_concrete_type takes the first constraint ---------------------
