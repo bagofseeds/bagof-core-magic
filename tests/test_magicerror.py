@@ -124,3 +124,24 @@ def test_pickle_round_trip_of_a_subclass() -> None:
     error = MagicError("boom", value=1)
     assert pickle.loads(pickle.dumps(error)).value == 1
     assert issubclass(Custom, MagicError)
+
+
+# --- a hint cannot be reassigned --------------------------------------
+
+
+def test_hint_cannot_be_reassigned() -> None:
+    # The introspected properties are computed once and `__post_init__`
+    # runs once, so a reassigned hint would leave the object describing
+    # a hint it no longer has - and skip its own BOUND check.
+    magic = Magic(tx.List[int])
+    assert magic.origin is list
+    with pytest.raises(AttributeError, match="cannot be reassigned"):
+        magic.hint = tx.Dict[str, int]
+    assert magic.hint == tx.List[int]
+    assert magic.origin is list
+
+
+def test_other_attributes_are_still_writable() -> None:
+    magic = Magic(int)
+    magic.whatever = 1  # type: ignore[attr-defined]
+    assert magic.whatever == 1  # type: ignore[attr-defined]
