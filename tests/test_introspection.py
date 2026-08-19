@@ -7,6 +7,7 @@ import typing_extensions as tx
 # locals
 from bagof.core.magic import (
     _type_dist,
+    _unwrap_typevar,
     get_default,
     get_from_registry,
     ishintstance,
@@ -137,13 +138,24 @@ def test_get_default_is_unchanged(hint: tx.Any, expected: tx.Any) -> None:
 # --- typevar cycles ----------------------------------------------------
 
 
+def test_the_reentrancy_guard_terminates() -> None:
+    # Regression: the guard returned the typevar, which sent `unwrap`
+    # straight back into it - turning one infinite recursion into
+    # another. Drive the guard directly, so this holds on every Python.
+    typevar = tx.TypeVar("typevar")
+    assert _unwrap_typevar(typevar, (typevar,)) is tx.Any
+
+
 def test_unwrap_terminates_on_a_typevar_cycle() -> None:
-    # Regression: the reentrancy guard returned the typevar, which sent
-    # `unwrap` straight back into it, so a cycle raised RecursionError.
     first = tx.TypeVar("first")
     second = tx.TypeVar("second")
-    first.__default__ = second
-    second.__default__ = first
+    try:
+        first.__default__ = second
+        second.__default__ = first
+    except AttributeError:  # pragma: no cover
+        # `__default__` is a read-only slot from python 3.13 on, so the
+        # cycle cannot be built there. The guard itself is covered above.
+        pytest.skip("TypeVar.__default__ is not writable")
     assert unwrap(first, (tx.Annotated, tx.TypeVar)) is tx.Any
 
 

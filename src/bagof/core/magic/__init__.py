@@ -69,6 +69,24 @@ REAL_TYPES = (
 )
 """The real-number types [`eq_safenan`][] recognises."""
 
+_SPECIAL_FORMS = (tx.Any, tx.Optional, tx.Literal) + UNION_TYPES
+"""
+The typing constructs that must never be treated as classes.
+
+Several of these *are* classes on some Python versions and not on others
+- [`Any`][typing.Any] became one in 3.11, and [`Union`][typing.Union]
+became one in 3.14, when it merged with
+[`types.UnionType`][] - so `#!python isinstance(hint, type)` silently
+gives different answers across the versions this package supports. Pin
+the answer instead of inheriting it.
+"""
+
+
+def _is_special_form(hint: tx.Any) -> bool:
+    """Whether a hint is a typing construct rather than a class."""
+    # Identity, not `in`: `==` on typing objects can be surprising.
+    return any(hint is form for form in _SPECIAL_FORMS)
+
 
 class Unset:
 
@@ -437,7 +455,7 @@ def get_concrete_type(hint: tx.Any, fallback: type = UNSET) -> tx.Type[tx.Any]:
         ```
     """
     origin = safe_get_origin(hint, unwrap=(tx.Annotated, tx.TypeVar))
-    if safe_isinstance(origin, type) and not inspect.isabstract(origin):
+    if _is_concrete_type(origin):
         return origin
     concrete = _first_concrete_constraint(hint)
     if concrete is not None:
@@ -450,6 +468,15 @@ def get_concrete_type(hint: tx.Any, fallback: type = UNSET) -> tx.Type[tx.Any]:
     )
 
 
+def _is_concrete_type(hint: tx.Any) -> bool:
+    """Whether a hint is a class that can actually be instantiated."""
+    if _is_special_form(hint):
+        # `Union` is a class from python 3.14 on, but instantiating it
+        # is still meaningless.
+        return False
+    return safe_isinstance(hint, type) and not inspect.isabstract(hint)
+
+
 def _first_concrete_constraint(hint: tx.Any) -> tx.Optional[type]:
     """The first concrete constraint of a constrained typevar, if any."""
     typevar = unwrap(hint, tx.Annotated)
@@ -457,7 +484,7 @@ def _first_concrete_constraint(hint: tx.Any) -> tx.Optional[type]:
         return None
     for constraint in getattr(typevar, "__constraints__", ()):
         origin = safe_get_origin(constraint, unwrap=(tx.Annotated,))
-        if safe_isinstance(origin, type) and not inspect.isabstract(origin):
+        if _is_concrete_type(origin):
             return origin
     return None
 
@@ -607,11 +634,13 @@ def issubclassable(cls: tx.Any) -> bool:
         even though they are not technically types.
 
     !!! note
-        [`Any`][typing.Any] is never subclassable, on any Python version.
-        It became a class in 3.11, so `#!python isinstance(Any, type)`
+        A typing construct - [`Any`][typing.Any], [`Union`][typing.Union],
+        [`Literal`][typing.Literal] - is never subclassable, on any Python
+        version. Some of them *are* classes on recent Pythons (`Any` from
+        3.11, `Union` from 3.14), so `#!python isinstance(hint, type)`
         answers differently across the versions this package supports.
     """
-    if cls is tx.Any:
+    if _is_special_form(cls):
         return False
     if cls is tx.TypedDict:
         return True
@@ -668,10 +697,10 @@ def safe_issubclass(subcls: tx.Any, cls: tx.Any) -> bool:
         return any(safe_issubclass(subcls, each) for each in cls)
     if is_typeddict(cls):
         return cls in _all_orig_bases(subcls)
-    if cls is tx.Any or subcls is tx.Any:
-        # `Any` is a class from python 3.11 on, so `issubclass` would
-        # answer it - differently than on the versions before. Never
-        # treat it as one, on any version.
+    if _is_special_form(cls) or _is_special_form(subcls):
+        # A typing construct may be a real class on a recent Python
+        # (`Any` from 3.11, `Union` from 3.14), so `issubclass` would
+        # answer it - differently than on the versions before.
         return False
     if isinstance(subcls, type) and isinstance(cls, type):
         return issubclass(subcls, cls)

@@ -150,3 +150,27 @@ def test_repr_does_not_compare_hints_with_eq() -> None:
 
     assert isinstance(repr(Magic(Uncomparable())), str)
     assert repr(Magic()) == "Magic()"
+
+
+# --- typing constructs are never classes ------------------------------
+
+
+@pytest.mark.parametrize("form", [tx.Any, tx.Union, tx.Literal, tx.Optional])
+def test_special_forms_are_never_treated_as_classes(form: tx.Any) -> None:
+    # `Any` became a class in 3.11 and `Union` in 3.14 (when it merged
+    # with `types.UnionType`), so `isinstance(hint, type)` answers
+    # differently across the versions this package supports. The answer
+    # is pinned rather than inherited.
+    assert magic._is_special_form(form) is True
+    assert magic.issubclassable(form) is False
+    assert magic._is_concrete_type(form) is False
+    assert magic.safe_issubclass(form, object) is False
+    assert magic.safe_issubclass(int, form) is False
+
+
+@pytest.mark.parametrize("cls,expected", [(int, True), (list, True),
+                                          (abc.Sequence, False)])
+def test_real_classes_are_unaffected(cls: type, expected: bool) -> None:
+    # Abstract classes are not concrete either, but for the usual reason.
+    assert magic._is_concrete_type(cls) is expected
+    assert magic.issubclassable(cls) is True
