@@ -295,7 +295,7 @@ class MagicError(Exception):
         causes: bool = True
     ) -> str:
         if message is None:
-            message = self.nice_message or ""
+            message = self.message or ""
 
         if this:
             if message:
@@ -307,12 +307,12 @@ class MagicError(Exception):
             message = f"{message}\n|> value = {self.value!r}"
 
         if causes and self.causes:
-            arrow = "?> " if len(self.causes) > 1 else "->"
-            value = len(self.causes) == 1
+            arrow = "?>" if len(self.causes) > 1 else "->"
+            show_value = len(self.causes) == 1
             for cause in self.causes:
                 if hasattr(cause, "_make_message"):
                     cause_message = cause._make_message(
-                        this=this, value=value
+                        this=this, value=show_value
                     )
                     message = f"{message}\n{arrow} {cause_message}"
         return message
