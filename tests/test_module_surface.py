@@ -1,6 +1,8 @@
 """Tests for the module's public surface, constants and small helpers."""
 
 # stdlib
+import collections
+from collections import abc
 
 # dependencies
 import pytest
@@ -10,6 +12,7 @@ import typing_extensions as tx
 import bagof.core.magic as magic
 from bagof.core.magic import (
     UNION_TYPES,
+    type2hint,
 )
 
 # --- the public surface ------------------------------------------------
@@ -49,3 +52,30 @@ def test_type_checking_shim_names_come_from_types() -> None:
     assert not hasattr(tx, "NoneType")
     assert not hasattr(tx, "UnionType")
     assert magic.NoneType is type(None)
+
+
+# --- type2hint ---------------------------------------------------------
+
+
+@pytest.mark.parametrize("value", [3, None, [1, 2], "text"])
+def test_type2hint_returns_a_non_type_as_is(value: tx.Any) -> None:
+    # Regression: `x.__name__` was unguarded, so a non-type raised
+    # AttributeError despite the documented "returned as is".
+    assert type2hint(value) == value
+
+
+@pytest.mark.parametrize(
+    "cls,name",
+    [
+        (frozenset, "FrozenSet"),
+        (collections.defaultdict, "DefaultDict"),
+        (collections.OrderedDict, "OrderedDict"),
+        (abc.Set, "AbstractSet"),
+    ],
+)
+def test_type2hint_maps_camel_cased_aliases(cls: type, name: str) -> None:
+    # `str.capitalize()` lower-cases everything after the first character,
+    # so these never resolved. Subscriptable types are returned unchanged
+    # (they need no alias), which is what happens from Python 3.9 on.
+    expected = cls if magic.issubscriptable(cls) else getattr(tx, name)
+    assert type2hint(cls) is expected
