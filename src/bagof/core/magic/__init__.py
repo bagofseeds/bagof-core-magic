@@ -233,6 +233,19 @@ class MultipleCauses(Exception):
         self.__all_causes__ = tuple(causes)
 
 
+def _rebuild_magic_error(
+    cls: tx.Type["MagicError"],
+    message: str,
+    args: tx.Tuple[tx.Any, ...],
+    this: tx.Any,
+    value: tx.Any,
+) -> "MagicError":
+    """Reconstruct a [`MagicError`][] from its undecorated parts."""
+    # Module-level (rather than a lambda or a method) so that it can be
+    # pickled by reference.
+    return cls(message, *args, this=this, value=value)
+
+
 class MagicError(Exception):
     """An exception raised by magic objects (factories, converters)."""
 
@@ -267,17 +280,31 @@ class MagicError(Exception):
     def nice_message(self) -> str:
         return getattr(self, "args", ("",))[0]
 
+    def __reduce__(self) -> tx.Tuple[tx.Any, ...]:
+        # The default `BaseException.__reduce__` returns `(cls, self.args)`,
+        # whose first element is the *decorated* message - so a round-trip
+        # would decorate it a second time - and it drops `this`/`value`,
+        # which live outside `args`. Rebuild from the undecorated parts.
+        rest = tuple(self.args[1:])
+        state = (type(self), self.message, rest, self.this, self.value)
+        return (_rebuild_magic_error, state)
+
     @property
     def causes(self) -> tx.Tuple[Exception, ...]:
         if hasattr(self, "__all_causes__"):
             return self.__all_causes__
         if self.__cause__ is not None:
-            return (self.__cause__,)
+            # A `MultipleCauses` wrapper is transparent: expose the causes
+            # it carries, not the wrapper itself.
+            cause = self.__cause__
+            return getattr(cause, "__all_causes__", (cause,))
         return ()
 
     @property
     def depth(self) -> int:
-        return 1 + max(getattr(p, "depth", 0) for p in self.causes)
+        return 1 + max(
+            (getattr(p, "depth", 0) for p in self.causes), default=0
+        )
 
     @property
     def best_cause(self) -> tx.Optional[tx.Self]:
@@ -295,7 +322,10 @@ class MagicError(Exception):
         causes: bool = True
     ) -> str:
         if message is None:
-            message = self.nice_message or ""
+            # `self.message` is the undecorated text. Using `nice_message`
+            # here (which is `args[0]`, already decorated by `__init__`)
+            # would prefix and append a second time at every level.
+            message = self.message or ""
 
         if this:
             if message:
@@ -307,14 +337,16 @@ class MagicError(Exception):
             message = f"{message}\n|> value = {self.value!r}"
 
         if causes and self.causes:
-            arrow = "?> " if len(self.causes) > 1 else "->"
-            value = len(self.causes) == 1
+            arrow = "?>" if len(self.causes) > 1 else "->"
+            cause_value = len(self.causes) == 1
             for cause in self.causes:
                 if hasattr(cause, "_make_message"):
                     cause_message = cause._make_message(
-                        this=this, value=value
+                        this=this, value=cause_value
                     )
-                    message = f"{message}\n{arrow} {cause_message}"
+                else:
+                    cause_message = f"{type(cause).__name__}: {cause}"
+                message = f"{message}\n{arrow} {cause_message}"
         return message
 
 
