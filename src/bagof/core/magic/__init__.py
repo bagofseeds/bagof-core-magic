@@ -542,7 +542,14 @@ def issubclassable(cls: tx.Any) -> bool:
         This function differs from `#!python isinstance(cls, type)` in that it
         returns [`True`][] for [`TypedDict`][tx.TypedDict] and its subclasses,
         even though they are not technically types.
+
+    !!! note
+        [`Any`][typing.Any] is never subclassable, on any Python version.
+        It became a class in 3.11, so `#!python isinstance(Any, type)`
+        answers differently across the versions this package supports.
     """
+    if cls is tx.Any:
+        return False
     if cls is tx.TypedDict:
         return True
     return isinstance(cls, type)
@@ -580,6 +587,9 @@ def safe_issubclass(subcls: tx.Any, cls: tx.Any) -> bool:
     !!! warning
         If `cls` is a [`TypedDict`][tx.TypedDict], this function looks
         at `subcls`'s `__orig_bases__`, instead of its `__bases__`.
+        A plain [`dict`][] is *not* a subclass of a
+        [`TypedDict`][tx.TypedDict] - the relation only holds the other
+        way round.
 
     !!! example
         ```pycon
@@ -594,7 +604,12 @@ def safe_issubclass(subcls: tx.Any, cls: tx.Any) -> bool:
     if isinstance(cls, tuple):
         return any(safe_issubclass(subcls, each) for each in cls)
     if is_typeddict(cls):
-        return cls in _all_orig_bases(subcls) or subcls is dict
+        return cls in _all_orig_bases(subcls)
+    if cls is tx.Any or subcls is tx.Any:
+        # `Any` is a class from python 3.11 on, so `issubclass` would
+        # answer it - differently than on the versions before. Never
+        # treat it as one, on any version.
+        return False
     if isinstance(subcls, type) and isinstance(cls, type):
         return issubclass(subcls, cls)
     return False
@@ -605,8 +620,11 @@ def safe_isinstance(obj: tx.Any, cls: tx.Any) -> bool:
     Safe isinstance (does not fail if second argument is not a type).
 
     !!! warning
-        If `cls` is a [`TypedDict`][tx.TypedDict], this function looks
-        at the `obj`'s `__orig_bases__`, instead of its `__bases__`.
+        A [`TypedDict`][tx.TypedDict] cannot be instance-checked. Python
+        refuses `#!python isinstance(value, SomeTypedDict)` outright, and
+        a TypedDict leaves no trace on the dict it describes, so there is
+        nothing to recognise at runtime. This function therefore answers
+        [`False`][] for one; validate the *shape* of the dict instead.
 
     !!! example
         ```pycon

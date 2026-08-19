@@ -10,6 +10,7 @@ from bagof.core.magic import (
     get_default,
     get_from_registry,
     ishintstance,
+    issubclassable,
     safe_isinstance,
     safe_issubclass,
     unwrap,
@@ -93,13 +94,10 @@ def test_registry_prefers_TypedDict_over_dict_at_equal_distance() -> None:
     assert get_from_registry(Base, registry) == "typeddict"
 
 
-@pytest.mark.xfail(
-    reason="`safe_issubclass(dict, SomeTypedDict)` is True, so the "
-    "equal-distance tie-break lets a `dict` key displace the typeddict "
-    "one when it comes second in the registry.",
-    strict=True,
-)
 def test_registry_typeddict_preference_is_order_independent() -> None:
+    # Regression: `safe_issubclass(dict, SomeTypedDict)` used to be True,
+    # so the equal-distance tie-break let a `dict` key displace the
+    # typeddict one whenever it came second in the registry.
     registry = {tx.TypedDict: "typeddict", dict: "dict"}
     assert get_from_registry(Base, registry) == "typeddict"
 
@@ -161,8 +159,10 @@ def test_unwrap_terminates_on_a_typevar_cycle() -> None:
         # Still safe: a non-type member is skipped, not raised on.
         (1, (int, "not a type"), True),
         (1.5, (int, "not a type"), False),
-        # A tuple may contain a TypedDict.
-        ({"a": 1}, (Base,), True),
+        # A TypedDict cannot be instance-checked at all, so a dict is
+        # not an instance of one - see `test_typeddict_is_not_instance
+        # _checkable` below.
+        ({"a": 1}, (Base,), False),
     ],
 )
 def test_safe_isinstance_accepts_a_tuple(
@@ -184,3 +184,42 @@ def test_safe_issubclass_accepts_a_tuple(
     subcls: tx.Any, classes: tx.Any, expected: bool
 ) -> None:
     assert safe_issubclass(subcls, classes) is expected
+
+
+# --- TypedDicts are not instance-checkable ----------------------------
+
+
+def test_typeddict_is_not_instance_checkable() -> None:
+    # Python refuses `isinstance(value, SomeTypedDict)` outright, and a
+    # TypedDict leaves no trace on the dict it describes - so there is
+    # nothing to recognise at runtime.
+    with pytest.raises(TypeError):
+        isinstance({"a": 1}, Base)
+    assert safe_isinstance({"a": 1}, Base) is False
+    assert safe_isinstance({"wrong": 1}, Base) is False
+
+
+def test_dict_is_not_a_subclass_of_a_typeddict() -> None:
+    # Regression: an `or subcls is dict` clause ran the relation
+    # backwards. A TypedDict is a dict; a dict is not a TypedDict.
+    assert safe_issubclass(dict, Base) is False
+    assert safe_issubclass(Base, tx.TypedDict) is True
+    assert safe_issubclass(Middle, Base) is True
+
+
+def test_a_bare_dict_hint_does_not_resolve_to_a_typeddict_entry() -> None:
+    assert get_from_registry(dict, {Base: "typeddict"}) is None
+
+
+# --- Any is never type-like -------------------------------------------
+
+
+def test_any_is_not_subclassable_on_any_version() -> None:
+    # `typing.Any` became a class in 3.11, so `isinstance(Any, type)`
+    # answers differently across the versions this package supports.
+    # Pin the answer instead of inheriting it.
+    assert issubclassable(tx.Any) is False
+    assert safe_issubclass(tx.Any, object) is False
+    assert safe_issubclass(int, tx.Any) is False
+    assert _type_dist(tx.Any, object) == float("inf")
+    assert get_from_registry(tx.Any, {object: "any"}) is None
