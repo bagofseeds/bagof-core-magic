@@ -872,19 +872,22 @@ def unwrap(hint: tx.Any, origin: tx.Any = (tx.Annotated,)) -> tx.Any:
 _unwrap = unwrap  # alias for convenience
 
 
-def _unwrap_typevar(hint: tx.Any, __rentrant: tuple = ()) -> tx.Any:
+def _unwrap_typevar(hint: tx.Any, __reentrant: tuple = ()) -> tx.Any:
     origin = get_origin_uw(hint)
-    if origin in __rentrant:
-        return origin
-    __rentrant += (origin,)
+    if origin in __reentrant:
+        # A cycle (e.g. two typevars defaulting to each other). Returning
+        # the typevar would send `unwrap` straight back in here, so answer
+        # what an uninformative typevar answers.
+        return tx.Any
+    __reentrant += (origin,)
     if not safe_isinstance(origin, tx.TypeVar):
         return hint
     if getattr(origin, "__default__", tx.NoDefault) is not tx.NoDefault:
-        return _unwrap_typevar(origin.__default__, __rentrant=__rentrant)
+        return _unwrap_typevar(origin.__default__, __reentrant=__reentrant)
     if getattr(origin, "__constraints__", ()):
         return tx.Union[origin.__constraints__]
     if getattr(origin, "__bound__", None) is not None:
-        return _unwrap_typevar(origin.__bound__, __rentrant=__rentrant)
+        return _unwrap_typevar(origin.__bound__, __reentrant=__reentrant)
     return tx.Any
 
 
