@@ -397,7 +397,8 @@ def get_concrete_type(hint: tx.Any, fallback: type = UNSET) -> tx.Type[tx.Any]:
     * If the hint has an origin, it is used.
     * If the hint is a [`TypeVar`][typing.TypeVar]:
         - its default value is used, if it has one; otherwise
-        - its constraints are used, if it has any; otherwise
+        - the **first** of its constraints is used, if it has any;
+          otherwise
         - its bound is used, if it has one; otherwise
         - the fallback type is used, if it is provided; otherwise
         - a [`TypeError`][] is raised.
@@ -405,10 +406,27 @@ def get_concrete_type(hint: tx.Any, fallback: type = UNSET) -> tx.Type[tx.Any]:
       returned as is; otherwise
     * The fallback type is used, if it is provided; otherwise
     * A [`TypeError`][] is raised.
+
+    !!! note
+        A constrained typevar has no single concrete type - it stands for
+        the union of its constraints - so the first constraint is taken,
+        the same way [`get_default`][] takes the first value of a
+        [`Literal`][tx.Literal].
+
+    !!! example
+        ```pycon
+        >>> get_concrete_type(List[int])
+        <class 'list'>
+        >>> get_concrete_type(TypeVar("T", int, str))
+        <class 'int'>
+        ```
     """
     origin = safe_get_origin(hint, unwrap=(tx.Annotated, tx.TypeVar))
     if _is_concrete_type(origin):
         return origin
+    concrete = _first_concrete_constraint(hint)
+    if concrete is not None:
+        return concrete
     if safe_isinstance(fallback, type):
         return fallback
     raise TypeError(
@@ -424,6 +442,18 @@ def _is_concrete_type(hint: tx.Any) -> bool:
         # is still meaningless.
         return False
     return safe_isinstance(hint, type) and not inspect.isabstract(hint)
+
+
+def _first_concrete_constraint(hint: tx.Any) -> tx.Optional[type]:
+    """The first concrete constraint of a constrained typevar, if any."""
+    typevar = unwrap(hint, tx.Annotated)
+    if not safe_isinstance(typevar, tx.TypeVar):
+        return None
+    for constraint in getattr(typevar, "__constraints__", ()):
+        origin = safe_get_origin(constraint, unwrap=(tx.Annotated,))
+        if _is_concrete_type(origin):
+            return origin
+    return None
 
 
 def get_default(hint: tx.Any) -> tx.Any:
