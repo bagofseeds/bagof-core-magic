@@ -964,18 +964,41 @@ def get_args_uw(hint: tx.Any) -> tx.Tuple[tx.Any, ...]:
     return safe_get_args(hint, unwrap=tx.Annotated)
 
 
-def eq_safenan(x: tx.Any) -> bool:
+class _NaN:
+    """The value every real NaN is mapped to by [`eq_safenan`][]."""
+
+    def __repr__(self) -> str:
+        return "<NaN>"
+
+
+_NAN = _NaN()
+
+
+def eq_safenan(x: tx.Any) -> tx.Any:
     """
     Map a value to a form that compares equal across NaNs.
 
     Since `#!python float("nan") != float("nan")`, comparing values that
     may contain NaN with `==` is unsafe. Apply this function to both
-    operands before comparing them: real NaN values are mapped to the
-    string `"NaN"` (so that two NaNs compare equal), while every other
-    value is returned unchanged.
+    operands before comparing them: real NaN values are all mapped to one
+    sentinel (so that two NaNs compare equal), while every other value is
+    returned unchanged.
+
+    !!! note
+        Only real numbers are recognised. A complex NaN is returned
+        unchanged, and so still compares unequal to itself.
+
+    !!! example
+        ```pycon
+        >>> nan = float("nan")
+        >>> nan == nan
+        False
+        >>> eq_safenan(nan) == eq_safenan(nan)
+        True
+        ```
     """
     if isinstance(x, REAL_TYPES) and math.isnan(x):
-        return "NaN"
+        return _NAN
     return x
 
 
