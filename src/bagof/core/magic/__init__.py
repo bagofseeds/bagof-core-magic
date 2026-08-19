@@ -277,7 +277,7 @@ class MagicError(Exception):
 
     @property
     def depth(self) -> int:
-        return 1 + max(getattr(p, "depth", 0) for p in self.causes)
+        return 1 + max((getattr(p, "depth", 0) for p in self.causes), default=0)
 
     @property
     def best_cause(self) -> tx.Optional[tx.Self]:
