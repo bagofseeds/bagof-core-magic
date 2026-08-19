@@ -7,6 +7,7 @@ import typing_extensions as tx
 # locals
 from bagof.core.magic import (
     _type_dist,
+    get_default,
     get_from_registry,
     ishintstance,
 )
@@ -81,3 +82,27 @@ def test_typeddict_is_one_step_from_TypedDict() -> None:
     # "not found" distance instead of 1.
     assert _type_dist(Base, tx.TypedDict) == 1
     assert _type_dist(Middle, tx.TypedDict) == 2
+
+
+# --- get_default -------------------------------------------------------
+
+
+def test_get_default_of_a_bare_literal_raises_type_error() -> None:
+    # Regression: `args[0]` was unguarded, so this raised IndexError -
+    # which callers built on the documented TypeError do not catch.
+    with pytest.raises(TypeError):
+        get_default(tx.Literal)
+
+
+@pytest.mark.parametrize(
+    "hint,expected",
+    [
+        (tx.Literal[1, 2], 1),
+        (tx.Literal[None, 1], None),
+        (tx.Optional[int], None),
+        (tx.Annotated[tx.Optional[int], "meta"], None),
+        (tx.Union[tx.Literal[3], str], 3),
+    ],
+)
+def test_get_default_is_unchanged(hint: tx.Any, expected: tx.Any) -> None:
+    assert get_default(hint) == expected

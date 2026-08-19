@@ -395,11 +395,11 @@ def get_default(hint: tx.Any) -> tx.Any:
     """
     origin = safe_get_origin(hint, unwrap=tx.Annotated)
     args = safe_get_args(hint, unwrap=tx.Annotated)
-    if origin is tx.Literal:
+    if origin is tx.Literal and args:
         if None in args:
             return None
         return args[0]
-    if origin in (tx.Union, UnionType):
+    if origin in UNION_TYPES:
         if NoneType in args:
             return None
         for arg in args:
