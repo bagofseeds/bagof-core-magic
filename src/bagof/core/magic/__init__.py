@@ -31,6 +31,7 @@ __all__ = [
 
 # stdlib
 import collections
+import copy
 import inspect
 import math
 import numbers
@@ -157,6 +158,16 @@ class MagicHint(tx.Generic[T]):
     _FROZEN = ("hint",)
     """The attributes that cannot be reassigned after construction."""
 
+    _CACHED: tx.Tuple[str, ...] = (
+        "_unwrapped", "_origin", "_args", "_fallback"
+    )
+    """
+    The attributes that memoise something derived from [`hint`][].
+
+    [`rebind`][] clears these. A subclass that memoises more should
+    extend this tuple rather than replace it.
+    """
+
     def __init__(self, hint: tx.Any = UNSET) -> None:
         """
         Parameters
@@ -166,14 +177,55 @@ class MagicHint(tx.Generic[T]):
             If not provided, the default hint for the class is used.
 
         !!! note
-            [`hint`][] cannot be reassigned afterwards. Build a new magic
-            object for a different hint - the introspected properties are
-            computed once and kept.
+            [`hint`][] cannot be reassigned afterwards - the introspected
+            properties are computed once and kept. Use [`rebind`][] to
+            get a copy that describes a different hint.
         """
+        # Recorded before the default is substituted, so that "no hint was
+        # given" stays distinguishable from "a hint equal to `DEFAULT` was
+        # given". `Annotated` metadata relies on the difference.
+        self._hint_given = hint is not UNSET
         if hint is UNSET:
             hint = self.DEFAULT
         self.hint = normalise_hint(hint)
         self.__post_init__()
+
+    @property
+    def has_explicit_hint(self) -> bool:
+        """
+        Whether a hint was passed to the constructor.
+
+        `False` when the object fell back to its [`DEFAULT`][] - which is
+        not the same as carrying a hint that happens to equal it.
+        """
+        return getattr(self, "_hint_given", True)
+
+    def rebind(self, hint: tx.Any) -> tx.Self:
+        """
+        Return a copy of this object describing a different hint.
+
+        Every other attribute is carried over, so a configured object
+        keeps its configuration - a threshold, a pattern, a length. The
+        memoised properties listed in [`_CACHED`][] are recomputed.
+
+        !!! example
+            ```pycon
+            >>> validator = IsGreaterThan(0)      # hint defaults to Number
+            >>> stricter = validator.rebind(int)
+            >>> stricter.threshold, stricter.hint
+            (0, <class 'int'>)
+            ```
+        """
+        new = copy.copy(self)
+        for name in self._CACHED:
+            new.__dict__.pop(name, None)
+        # `hint` is frozen, so assign through `__dict__` rather than
+        # tripping the guard that exists to stop exactly this happening
+        # to a *live* object. This one is a fresh copy.
+        new.__dict__["hint"] = normalise_hint(hint)
+        new.__dict__["_hint_given"] = True
+        new.__post_init__()
+        return new
 
     def __setattr__(self, name: str, value: tx.Any) -> None:
         # `unwrapped`/`origin`/`args`/`fallback` are computed once and
