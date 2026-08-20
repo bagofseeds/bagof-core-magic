@@ -62,9 +62,9 @@ def test_nested_message_reports_each_level_once() -> None:
     message = chain("top", "leaf")._make_message()
     assert message.count("|> value =") == 2
     assert message.splitlines() == [
-        "None: top",
+        "top",
         "|> value = 0",
-        "-> None: leaf",
+        "-> leaf",
         "|> value = 1",
     ]
 
@@ -190,3 +190,32 @@ def test_other_attributes_are_still_writable() -> None:
     magic = Magic(int)
     magic.whatever = 1  # type: ignore[attr-defined]
     assert magic.whatever == 1  # type: ignore[attr-defined]
+
+
+def test_message_omits_what_was_not_supplied() -> None:
+    # An error raised with neither `this` nor `value` used to render both
+    # anyway, as a literal "None: " prefix and a "|> value = <UNSET>" line.
+    assert str(MagicError("boom")) == "boom"
+    assert str(MagicError()) == ""
+    assert MagicError("boom").nice_message == "boom"
+
+
+def test_message_keeps_an_explicit_none_value() -> None:
+    # `None` is a real value; `UNSET` is the "not supplied" sentinel.
+    assert str(MagicError("boom", value=None)) == "boom\n|> value = None"
+    assert MagicError("boom", value=UNSET).value is UNSET
+
+
+def test_magic_hint_str_matches_repr() -> None:
+    magic = Magic(tx.Union[int, str])
+    assert str(magic) == repr(magic)
+
+
+def test_unset_reprs_as_a_marker() -> None:
+    assert repr(UNSET) == "<UNSET>"
+    assert str(UNSET) == "<UNSET>"
+
+
+def test_message_of_a_this_only_error_is_its_repr() -> None:
+    magic = Magic(int)
+    assert str(MagicError(this=magic)) == repr(magic)

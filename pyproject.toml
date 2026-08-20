@@ -76,6 +76,19 @@ file = "src/bagof/core/magic/_version.py"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
+[tool.coverage.run]
+source = ["bagof.core.magic"]
+omit = [
+    # Generated at build time by versioningit.
+    "*/_version.py",
+]
+
+[tool.coverage.report]
+exclude_also = [
+    # Type-checking-only blocks never run at runtime.
+    "if tx.TYPE_CHECKING:",
+]
+
 [tool.ruff]
 line-length = 79
 target-version = "py38"

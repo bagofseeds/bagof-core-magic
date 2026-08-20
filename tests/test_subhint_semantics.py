@@ -216,3 +216,65 @@ def test_a_default_still_wins_over_the_constraints() -> None:
 def test_an_abstract_constraint_is_skipped() -> None:
     partly_abstract = tx.TypeVar("a", tx.Sequence[int], int)
     assert get_concrete_type(partly_abstract) is int
+
+
+# --- super-hints that constrain nothing, or nothing checkable ----------
+
+
+def test_annotated_any_superhint_accepts_everything() -> None:
+    assert issubhint(int, tx.Annotated[tx.Any, "meta"]) is True
+
+
+def test_an_uncheckable_superhint_is_never_matched() -> None:
+    # `Self` has no origin that can be compared against a hint.
+    assert issubhint(int, tx.Self) is False
+
+
+# --- ellipsis arguments ------------------------------------------------
+
+
+ELLIPSIS_CASES = [
+    # A repeated argument cannot stand in for a fixed-arity hint.
+    (tx.Tuple[int, ...], tx.Tuple[int, str], False),
+    (tx.Tuple[int, ...], tx.Tuple[int], False),
+    # Repeated against repeated, compared covariantly.
+    (tx.Tuple[bool, ...], tx.Tuple[int, ...], True),
+    (tx.Tuple[str, ...], tx.Tuple[int, ...], False),
+]
+
+
+@pytest.mark.parametrize(
+    "hint,superhint,expected",
+    ELLIPSIS_CASES,
+    ids=[f"{h}<:{s}" for h, s, _ in ELLIPSIS_CASES],
+)
+def test_issubhint_with_ellipsis_arguments(
+    hint: tx.Any, superhint: tx.Any, expected: bool
+) -> None:
+    assert issubhint(hint, superhint) is expected
+
+
+# --- the family helpers reject a super-hint of the wrong kind ----------
+
+
+def test_issubnone_rejects_a_non_none_superhint() -> None:
+    # locals
+    from bagof.core.magic import _issubnone
+
+    with pytest.raises(TypeError, match="is not a NoneType"):
+        _issubnone(type(None), int)
+
+
+def test_issubunion_rejects_a_non_union_superhint() -> None:
+    # locals
+    from bagof.core.magic import _issubunion
+
+    with pytest.raises(TypeError, match="is not a Union type"):
+        _issubunion(int, int)
+
+
+def test_nan_maps_to_a_recognisable_marker() -> None:
+    # locals
+    from bagof.core.magic import eq_safenan
+
+    assert repr(eq_safenan(float("nan"))) == "<NaN>"
