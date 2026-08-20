@@ -18,6 +18,7 @@ __all__ = [
     "issubclassable",
     "issubscriptable",
     "is_typeddict",
+    "typeddict_required_keys",
     "type2hint",
     "unwrap",
     "Unset",
@@ -33,6 +34,7 @@ import collections
 import inspect
 import math
 import numbers
+import typing
 from collections import abc
 
 # dependencies
@@ -569,31 +571,38 @@ def _get_best_match(hint: tx.Any, registry: dict) -> tx.Tuple[tx.Any, float]:
 
         dist = _type_dist(hint, key)
 
+        if dist == float("inf"):
+            # Not a match at all.
+            continue
+
         if dist == 0:
             # Perfect match -> stop here
             best_match, best_dist = key, dist
             break
 
-        elif dist < best_dist:
-            if is_typeddict(best_match) and not is_typeddict(key):
-                # Prefer typeddict over other types if they are compatible
-                continue
-            else:
-                # Update best match
-                best_match, best_dist = key, dist
+        if best_match is None:
+            best_match, best_dist = key, dist
+            continue
 
-        elif dist == best_dist < float("inf") and is_typeddict(key):
-            # Prefer typeddict over other types if they are compatible.
-            # Two guards matter here: the tie (a typeddict key that is
-            # *further* away must not displace a nearer match) and the
-            # finite distance (the initial `best_dist` is infinite, and an
-            # unrelated typeddict key must not win by tying with it).
+        key_is_td, best_is_td = is_typeddict(key), is_typeddict(best_match)
+        if key_is_td != best_is_td:
+            # Prefer a typeddict key over a plain one. Their distances are
+            # measured along *different* hierarchies -- `__orig_bases__`
+            # for a typeddict, `__mro__` for a class -- so the two numbers
+            # are not comparable, and the nearer one is not the better
+            # one. A typeddict inheriting from another typeddict sits at
+            # distance 2 from `TypedDict` but only 1 from `dict`, and used
+            # to be handed to the `dict` entry.
+            if key_is_td:
+                best_match, best_dist = key, dist
+            continue
+
+        if dist < best_dist:
             best_match, best_dist = key, dist
 
-        elif dist == best_dist:
-            if safe_issubclass(key, best_match):
-                # Prefer more specific subclass
-                best_match = key
+        elif dist == best_dist and safe_issubclass(key, best_match):
+            # Prefer more specific subclass
+            best_match = key
 
     return best_match, best_dist
 
@@ -613,6 +622,7 @@ def _type_dist(subcls: type, cls: type) -> float:
     # `__mro__` branch, where `TypedDict` never appears - so the loop below
     # would fall through and report the "not found" distance instead of 1.
     if is_typeddict(cls):
+        cls = _canonical_typeddict(cls)
         bases = _all_orig_bases(subcls)
     else:
         bases = subcls.__mro__
@@ -642,9 +652,32 @@ def issubclassable(cls: tx.Any) -> bool:
     """
     if _is_special_form(cls):
         return False
-    if cls is tx.TypedDict:
+    if _is_typeddict_marker(cls):
         return True
     return isinstance(cls, type)
+
+
+# `typing.TypedDict` and `typing_extensions.TypedDict` are distinct
+# objects on every Python this package supports, and a class built from
+# one never mentions the other in its `__orig_bases__`. Both spellings
+# describe the same thing, so treat them interchangeably throughout --
+# `typing` is imported for this identity check alone, never for
+# annotations (which go through `tx`, per the house style).
+_TYPEDDICT_MARKERS = tuple(
+    marker
+    for marker in (tx.TypedDict, getattr(typing, "TypedDict", None))
+    if marker is not None
+)
+
+
+def _is_typeddict_marker(cls: tx.Any) -> bool:
+    """Whether `cls` is `TypedDict` itself, in either spelling."""
+    return any(cls is marker for marker in _TYPEDDICT_MARKERS)
+
+
+def _canonical_typeddict(cls: tx.Any) -> tx.Any:
+    """Collapse either `TypedDict` spelling to the canonical one."""
+    return tx.TypedDict if _is_typeddict_marker(cls) else cls
 
 
 def is_typeddict(cls: tx.Any) -> bool:
@@ -657,9 +690,42 @@ def is_typeddict(cls: tx.Any) -> bool:
         [`typing.is_typeddict`][tx.is_typeddict] in that it returns `True`
         for [`TypedDict`][tx.TypedDict] itself.
     """
-    if cls is tx.TypedDict:
+    if _is_typeddict_marker(cls):
         return True
     return tx.is_typeddict(cls)
+
+
+def typeddict_required_keys(cls: tx.Any) -> tx.FrozenSet[str]:
+    """
+    The required keys of a [`TypedDict`][tx.TypedDict].
+
+    Reads `__required_keys__` where the class has it -- the only source
+    that accounts for [`Required`][typing.Required] /
+    [`NotRequired`][typing.NotRequired] (in either nesting with
+    [`Annotated`][typing.Annotated]) and for inheriting from bases
+    declared with a different `total=`.
+
+    Falls back to `__total__` where it does not:
+    [`typing.TypedDict`][] gained `__required_keys__` only in Python 3.9,
+    and before that a key's requiredness came from the class's `total=`
+    alone -- per-key `Required`/`NotRequired` did not exist.
+
+    !!! example
+        ```pycon
+        >>> class Movie(TypedDict):
+        ...     title: str
+        ...     year: NotRequired[int]
+        >>> typeddict_required_keys(Movie)
+        frozenset({'title'})
+        ```
+    """
+    keys = getattr(cls, "__required_keys__", None)
+    if keys is not None:
+        return frozenset(keys)
+    annotations = getattr(cls, "__annotations__", {})
+    if getattr(cls, "__total__", True):
+        return frozenset(annotations)
+    return frozenset()
 
 
 def _all_orig_bases(cls: type, _self: bool = True) -> tx.Tuple[type, ...]:
@@ -667,9 +733,18 @@ def _all_orig_bases(cls: type, _self: bool = True) -> tx.Tuple[type, ...]:
     if not is_typeddict(cls):
         return ()
     bases = (cls,) if _self else ()
-    bases += getattr(cls, '__orig_bases__', ())
     for base in getattr(cls, '__orig_bases__', ()):
-        bases += _all_orig_bases(base, _self=False)
+        if _is_typeddict_marker(base):
+            # Appended once, canonically, at the end.
+            continue
+        bases += (base,) + _all_orig_bases(base, _self=False)
+    if _self:
+        # Always terminate with the canonical marker rather than trusting
+        # `__orig_bases__` to contain one. `typing.TypedDict` records no
+        # `__orig_bases__` at all on a sub-subclass, and the two spellings
+        # never appear in each other's bases -- so deriving this from the
+        # declared bases alone misses a typeddict that plainly is one.
+        bases += (tx.TypedDict,)
     return bases
 
 
@@ -696,7 +771,7 @@ def safe_issubclass(subcls: tx.Any, cls: tx.Any) -> bool:
     if isinstance(cls, tuple):
         return any(safe_issubclass(subcls, each) for each in cls)
     if is_typeddict(cls):
-        return cls in _all_orig_bases(subcls)
+        return _canonical_typeddict(cls) in _all_orig_bases(subcls)
     if _is_special_form(cls) or _is_special_form(subcls):
         # A typing construct may be a real class on a recent Python
         # (`Any` from 3.11, `Union` from 3.14), so `issubclass` would
