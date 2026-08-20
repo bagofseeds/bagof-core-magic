@@ -8,6 +8,7 @@ import typing_extensions as tx
 from bagof.core.magic import (
     _type_dist,
     _unwrap_typevar,
+    get_concrete_type,
     get_default,
     get_from_registry,
     ishintstance,
@@ -235,3 +236,142 @@ def test_any_is_not_subclassable_on_any_version() -> None:
     assert safe_issubclass(int, tx.Any) is False
     assert _type_dist(tx.Any, object) == float("inf")
     assert get_from_registry(tx.Any, {object: "any"}) is None
+
+
+# --- get_concrete_type -------------------------------------------------
+
+
+def test_get_concrete_type_uses_the_fallback() -> None:
+    # A union has no concrete origin, so the fallback is used.
+    assert get_concrete_type(tx.Union[int, str], list) is list
+
+
+def test_get_concrete_type_without_a_usable_fallback_raises() -> None:
+    with pytest.raises(TypeError, match="Cannot get concrete type"):
+        get_concrete_type(tx.Union[int, str])
+    with pytest.raises(TypeError, match="Cannot get concrete type"):
+        get_concrete_type(tx.Union[int, str], "not a type")
+
+
+def test_get_concrete_type_skips_an_abstract_or_special_origin() -> None:
+    # stdlib
+    from collections import abc
+
+    # `Sequence` is abstract, so the fallback wins.
+    assert get_concrete_type(tx.Sequence[int], list) is list
+    assert get_concrete_type(abc.Sequence, list) is list
+    # `Union` is a class from 3.14 on, but still not instantiable.
+    assert get_concrete_type(tx.Union, list) is list
+
+
+def test_get_concrete_type_of_a_constrained_typevar() -> None:
+    assert get_concrete_type(tx.TypeVar("T", int, str)) is int
+    # An unconstrained typevar has no constraint to fall back on.
+    with pytest.raises(TypeError):
+        get_concrete_type(tx.TypeVar("T"))
+
+
+# --- get_default, continued -------------------------------------------
+
+
+def test_get_default_skips_a_union_member_with_no_default() -> None:
+    # `int` has no default, so the search moves on to the literal.
+    assert get_default(tx.Union[int, tx.Literal[5]]) == 5
+
+
+# --- registry resolution, continued ------------------------------------
+
+
+def test_registry_retries_against_an_unwrapped_annotated_hint() -> None:
+    registry = {int: "number"}
+    assert get_from_registry(tx.Annotated[bool, "meta"], registry) == "number"
+
+
+def test_registry_matches_a_typevar_key() -> None:
+    registry = {tx.TypeVar: "typevar", object: "any"}
+    assert get_from_registry(tx.TypeVar("T"), registry) == "typevar"
+
+
+def test_registry_ignores_a_virtual_subclass_registration() -> None:
+    # stdlib
+    import abc as std_abc
+
+    class Virtual(std_abc.ABC):  # noqa: B024  -- a marker base, by design
+        pass
+
+    Virtual.register(int)
+
+    # `issubclass(int, Virtual)` is True, but `Virtual` is nowhere in
+    # `int.__mro__`, so it cannot be ranked against a real base class.
+    assert _type_dist(int, Virtual) == 1000
+    assert get_from_registry(int, {Virtual: "virtual", object: "any"}) == "any"
+
+
+# --- safe_issubclass ---------------------------------------------------
+
+
+def test_safe_issubclass_with_a_non_type_second_argument() -> None:
+    assert safe_issubclass(int, "not a type") is False
+    assert safe_issubclass("not a type", int) is False
+
+
+# --- ishintstance, continued -------------------------------------------
+
+
+def test_ishintstance_of_a_bare_union_asks_whether_it_is_one() -> None:
+    # A bare `Union` is not a type to check against: the question becomes
+    # "is this value's type a union?", which no value's type ever is.
+    assert ishintstance(1, tx.Union) is False
+
+
+def test_ishintstance_type_rejects_a_non_type_hint() -> None:
+    # locals
+    from bagof.core.magic import _ishintstance_type
+
+    with pytest.raises(TypeError, match="is not a type"):
+        _ishintstance_type(int, int)
+
+
+# --- unwrap ------------------------------------------------------------
+
+
+def test_unwrap_with_no_origins_is_a_no_op() -> None:
+    hint = tx.Annotated[int, "meta"]
+    assert unwrap(hint, None) is hint
+    assert unwrap(hint, ()) is hint
+
+
+# --- type2hint ---------------------------------------------------------
+
+
+def test_type2hint_leaves_a_subscriptable_value_alone() -> None:
+    # locals
+    from bagof.core.magic import type2hint
+
+    value = [1, 2, 3]
+    assert type2hint(value) is value
+
+
+def test_registry_prefers_the_narrower_of_two_virtual_bases() -> None:
+    # stdlib
+    import numbers
+
+    # `int` is a *virtual* subclass of both, so neither appears in its
+    # MRO and both sit at the "not found" distance. The tie is broken by
+    # which key is the more specific class.
+    assert _type_dist(int, numbers.Real) == _type_dist(int, numbers.Integral)
+    registry = {numbers.Real: "real", numbers.Integral: "integral"}
+    assert get_from_registry(int, registry) == "integral"
+    assert get_from_registry(int, dict(reversed(list(registry.items())))) == (
+        "integral"
+    )
+
+
+def test_type2hint_leaves_an_unhashable_value_alone() -> None:
+    # locals
+    from bagof.core.magic import type2hint
+
+    # A set is neither subscriptable nor hashable, so there is no key to
+    # look up and nothing to convert.
+    value = {1, 2}
+    assert type2hint(value) is value

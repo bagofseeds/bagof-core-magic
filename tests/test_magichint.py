@@ -126,3 +126,15 @@ def test_properties_are_cached() -> None:
     assert magic.unwrapped is magic.unwrapped
     assert magic.origin is magic.origin
     assert magic.args is magic.args
+
+
+def test_call_on_the_base_class_is_not_implemented() -> None:
+    with pytest.raises(NotImplementedError, match="must implement __call__"):
+        Magic(int)()
+
+
+def test_fallback_of_a_hint_with_no_concrete_type() -> None:
+    # No concrete origin and no usable `FALLBACK`: the hint stands in for
+    # itself rather than the lookup raising.
+    hint = tx.Union[int, str]
+    assert Magic(hint).fallback is hint

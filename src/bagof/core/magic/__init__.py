@@ -49,13 +49,13 @@ if tx.TYPE_CHECKING:
 else:
     try:
         from types import NoneType, UnionType
-    except ImportError:
+    except ImportError:  # pragma: no cover  -- Python < 3.10
         NoneType = type(None)
         UnionType = tx.Union
 
     try:
         import numpy as _np
-    except ImportError:
+    except ImportError:  # pragma: no cover  -- numpy is optional
         _np = None
 
 # typing
@@ -452,13 +452,16 @@ class MagicError(Exception):
             # would prefix and append a second time at every level.
             message = self.message or ""
 
-        if this:
+        # Only decorate with what was actually supplied. A `MagicError`
+        # raised without a `this`/`value` used to render them anyway, as
+        # a literal "None: " prefix and a "|> value = <UNSET>" line.
+        if this and self.this is not None:
             if message:
                 message = f"{self.this!r}: {message}"
             else:
                 message = f"{self.this!r}"
 
-        if value:
+        if value and self.value is not UNSET:
             message = f"{message}\n|> value = {self.value!r}"
 
         if causes and self.causes:
