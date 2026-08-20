@@ -94,14 +94,51 @@ def test_subclass_relation_holds_across_spellings(
     assert safe_issubclass(cls, dict)
 
 
+def _tracks_mixed_totality(TD: tx.Any) -> bool:
+    """Whether this runtime records requiredness across a `total=` change.
+
+    A capability probe rather than a version check: what matters is what
+    the class in front of us actually reports.
+    """
+
+    class Base(TD, total=False):
+        x: int
+
+    class Child(Base):
+        y: int
+
+    return set(getattr(Child, "__required_keys__", ())) == {"y"}
+
+
 @pytest.mark.parametrize("name,TD", SPELLINGS)
 def test_required_keys(name: str, TD: tx.Any) -> None:
     cases = _build(TD)
     assert typeddict_required_keys(cases["plain"]) == {"title", "year"}
     assert typeddict_required_keys(cases["total=False"]) == frozenset()
-    # Inheriting from a `total=False` base: only the child's own key is
-    # required. `__total__` alone reports this wrongly.
-    assert typeddict_required_keys(cases["mixed-total child"]) == {"b"}
+
+
+@pytest.mark.parametrize("name,TD", SPELLINGS)
+def test_required_keys_across_a_totality_change(
+    name: str, TD: tx.Any
+) -> None:
+    cases = _build(TD)
+    required = typeddict_required_keys(cases["mixed-total child"])
+    if _tracks_mixed_totality(TD):
+        # Only the child's own key is required. `__total__` alone reports
+        # this wrongly, which is why `__required_keys__` is preferred.
+        assert required == {"b"}
+    else:
+        # An older `typing.TypedDict` does not record which class declared
+        # a key, and a subclass has no `__orig_bases__` to walk -- so the
+        # true answer is not recoverable and every inherited key is
+        # reported required. Loudly conservative: a valid value fails,
+        # rather than an invalid one passing.
+        assert required == {"a", "b"}
+
+
+def test_typing_extensions_always_tracks_mixed_totality() -> None:
+    # The reason `typing_extensions` reimplements the class at all.
+    assert _tracks_mixed_totality(tx.TypedDict)
 
 
 def test_required_keys_handles_notrequired_under_annotated() -> None:

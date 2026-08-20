@@ -710,6 +710,20 @@ def typeddict_required_keys(cls: tx.Any) -> tx.FrozenSet[str]:
     and before that a key's requiredness came from the class's `total=`
     alone -- per-key `Required`/`NotRequired` did not exist.
 
+    !!! warning
+        On older Pythons, a [`typing.TypedDict`][] that inherits from a
+        base declared with a different `total=` reports **every**
+        inherited key as required. The stdlib does not record which class
+        declared a key, nor a usable link back to the base -- a subclass
+        has no `__orig_bases__` and its `__mro__` reaches only
+        [`dict`][] - so the true answer is not recoverable.
+
+        The error is in the safe direction: a required key that is really
+        optional makes a valid value fail loudly, rather than letting an
+        invalid one through. Use
+        [`typing_extensions.TypedDict`][tx.TypedDict], which reimplements
+        the class precisely to fix this, when it matters.
+
     !!! example
         ```pycon
         >>> class Movie(TypedDict):
