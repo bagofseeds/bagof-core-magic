@@ -1067,6 +1067,16 @@ def issubhint(hint: tx.Any, superhint: tx.Any) -> bool:
         # For bounds, the bound must be a subhint of the superhint
         return issubhint(unwrap(hint, tx.TypeVar), superhint)
 
+    if origin_uw is not tx.Literal and get_origin_uw(hint) is tx.Literal:
+        # The hint is a Literal and the superhint is not, so the class,
+        # union and NoneType branches below cannot see the literal's
+        # values - they only ever compare origins. A Literal is a subhint
+        # here iff every one of its values is valid for the superhint, the
+        # same question ishintstance already answers for a single value.
+        # A bare, unparametrised Literal has no values and stays False.
+        args = get_args_uw(hint)
+        return bool(args) and all(ishintstance(arg, superhint) for arg in args)
+
     if origin_uw in UNION_TYPES:
         return _issubunion(hint, superhint)
 
