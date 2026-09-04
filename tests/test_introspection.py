@@ -1,7 +1,9 @@
 """Tests for the hint-introspection helpers."""
 
 # dependencies
+import re
 import sys
+from collections import abc
 
 import pytest
 import typing_extensions as tx
@@ -207,6 +209,48 @@ def test_registry_rewrites_a_new_style_generic_recursively() -> None:
     assert get_from_registry(annotated, registry) == "annotated"
     deep = dict[str, tx.Optional[list[int]]]
     assert get_from_registry(deep, registry) == "deep"
+
+
+@pytest.mark.skipif(
+    sys.version_info < (3, 9), reason="list[int] needs PEP 585 (3.9+)"
+)
+def test_registry_rewrites_inside_callable() -> None:
+    # `Callable`'s parameters are a list and its return a type; a new-style
+    # generic in either is rewritten, and `...` is left whole.
+    registry = {
+        tx.Callable[[tx.List[int]], str]: "params",
+        tx.Callable[..., tx.List[int]]: "ret",
+        object: "any",
+    }
+    params = tx.Callable[[list[int]], str]
+    assert get_from_registry(params, registry) == "params"
+    assert get_from_registry(tx.Callable[..., list[int]], registry) == "ret"
+
+
+@pytest.mark.skipif(
+    sys.version_info < (3, 9), reason="abc/re generics need __class_getitem__"
+)
+def test_registry_new_style_generic_from_abc_and_re_origins() -> None:
+    # The origin table covers the abc / re / contextlib generics too, so a
+    # concrete `collections.abc.Collection[int]` meets its typing key.
+    registry = {
+        tx.Collection[int]: "collection",
+        tx.Pattern[str]: "pattern",
+        object: "any",
+    }
+    assert get_from_registry(abc.Collection[int], registry) == "collection"
+    assert get_from_registry(re.Pattern[str], registry) == "pattern"
+
+
+def test_registry_survives_an_origin_that_refuses_the_rewrite() -> None:
+    # Rewriting the query calls the origin's `__class_getitem__`; one that
+    # raises must not turn a lookup that would have matched by origin into
+    # an error.
+    class Picky:
+        def __class_getitem__(cls, item: object) -> object:
+            raise ValueError("no generics here")
+
+    assert get_from_registry(Picky, {Picky: "picky", object: "any"}) == "picky"
 
 
 @pytest.mark.skipif(

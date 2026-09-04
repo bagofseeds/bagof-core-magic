@@ -31,10 +31,12 @@ __all__ = [
 
 # stdlib
 import collections
+import contextlib
 import copy
 import inspect
 import math
 import numbers
+import re
 import typing
 from collections import abc
 
@@ -1489,7 +1491,12 @@ _TYPE2HINT_NAMES = (
     (set, "Set"),
     (tuple, "Tuple"),
     (type, "Type"),
+    (abc.AsyncGenerator, "AsyncGenerator"),
+    (abc.AsyncIterable, "AsyncIterable"),
+    (abc.AsyncIterator, "AsyncIterator"),
+    (abc.Awaitable, "Awaitable"),
     (abc.Callable, "Callable"),
+    (abc.Collection, "Collection"),
     (abc.Container, "Container"),
     (abc.Coroutine, "Coroutine"),
     (abc.Generator, "Generator"),
@@ -1513,6 +1520,10 @@ _TYPE2HINT_NAMES = (
     (collections.OrderedDict, "OrderedDict"),
     (collections.defaultdict, "DefaultDict"),
     (collections.deque, "Deque"),
+    (contextlib.AbstractContextManager, "ContextManager"),
+    (contextlib.AbstractAsyncContextManager, "AsyncContextManager"),
+    (re.Match, "Match"),
+    (re.Pattern, "Pattern"),
 )
 """
 The type hint each non-subscriptable type maps to, by name.
@@ -1573,26 +1584,36 @@ def _typing_spelling(hint: tx.Any) -> tx.Any:
     into the `typing` spelling lets the two meet.
 
     The rewrite reaches all the way down, so a new-style generic nested
-    inside a `Union`, `Optional`, `Annotated`, or another generic
-    (`Optional[list[int]]`, `list[list[int]]`) is rewritten too. `Literal`
-    (whose arguments are values, not types) and `Callable` (whose first
-    argument is a parameter *list*, not a type) are left as they are.
+    inside a `Union`, `Optional`, `Annotated`, `Callable`, or another
+    generic (`Optional[list[int]]`, `Callable[[list[int]], str]`) is
+    rewritten too. `Literal` is left alone: its arguments are values, not
+    types. It rewrites the query only, so it reaches a registry keyed in
+    the `typing` spelling from a new-style query, not the other way round.
     `list[int]` does not exist before Python 3.9, so there is nothing to
     rewrite there.
     """
     origin = tx.get_origin(hint)
-    if origin is None:
+    if origin is None or origin is tx.Literal:
         return hint
     args = tx.get_args(hint)
-    if not args or origin is tx.Literal or origin is abc.Callable:
-        return hint
     try:
+        if not args:
+            # `tuple[()]` reports no arguments from Python 3.11 on, but it
+            # is the empty-tuple type and still differs from `Tuple[()]`.
+            return tx.Tuple[()] if origin is tuple else hint
         if origin is tx.Annotated:
             # `(type, *metadata)`: rewrite the type, keep the metadata.
             inner = _typing_spelling(args[0])
-            if inner is args[0]:
+            if inner == args[0]:
                 return hint
             return tx.Annotated[(inner, *args[1:])]
+        if origin is abc.Callable and len(args) == 2:
+            # `(parameters, return)`: the parameters are a list of types,
+            # or `...` / a `ParamSpec`, which are left whole.
+            params, ret = args
+            if isinstance(params, list):
+                params = [_typing_spelling(each) for each in params]
+            return tx.Callable[(params, _typing_spelling(ret))]
         spelled = tuple(_typing_spelling(arg) for arg in args)
         if origin in UNION_TYPES:
             return tx.Union[spelled]
@@ -1600,5 +1621,8 @@ def _typing_spelling(hint: tx.Any) -> tx.Any:
         # generic (a user `Generic`) is rebuilt on its own origin.
         typing_origin = _TYPE2HINT.get(origin, origin)
         return typing_origin[spelled if len(spelled) > 1 else spelled[0]]
-    except TypeError:
+    except Exception:
+        # A rebuild that fails -- a user origin that refuses these
+        # arguments, an exotic `Callable` form -- leaves the hint as it
+        # was, to be matched by its origin instead.
         return hint
