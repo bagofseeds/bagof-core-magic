@@ -1,6 +1,10 @@
 """Tests for the hint-introspection helpers."""
 
 # dependencies
+import re
+import sys
+from collections import abc
+
 import pytest
 import typing_extensions as tx
 
@@ -79,6 +83,185 @@ def test_registry_documented_example_is_unchanged() -> None:
     registry = {int: "number", object: "any"}
     assert get_from_registry(bool, registry) == "number"
     assert get_from_registry(str, registry) == "any"
+
+
+# --- registry: exact matches for hints an origin would erase -----------
+
+_T = tx.TypeVar("_T")
+_S = tx.TypeVar("_S")
+
+
+@pytest.mark.parametrize(
+    "query,expected",
+    [
+        # A specific Union/Literal/TypeVar/parameterised generic is only
+        # reachable by identity -- its origin (Union/Literal/list) is not it.
+        (tx.Union[int, str], "union"),
+        # Union membership is order-insensitive, so a reordered query hits
+        # the same key.
+        (tx.Union[str, int], "union"),
+        (tx.Literal["a", "b"], "literal"),
+        (_T, "typevar-T"),
+        (tx.List[int], "list-int"),
+        # A different typevar is not the registered one.
+        (_S, "typevar-any"),
+    ],
+)
+def test_registry_matches_a_specific_hint_key(
+    query: tx.Any, expected: str
+) -> None:
+    registry = {
+        tx.Union[int, str]: "union",
+        tx.Literal["a", "b"]: "literal",
+        _T: "typevar-T",
+        tx.List[int]: "list-int",
+        tx.TypeVar: "typevar-any",
+        object: "any",
+    }
+    assert get_from_registry(query, registry) == expected
+
+
+def test_registry_specific_key_survives_an_annotated_wrapper() -> None:
+    # The metadata is transparent: a specific inner key is reached through
+    # `Annotated`, once the metadata itself has been accounted for.
+    registry = {tx.Union[int, str]: "union", object: "any"}
+    query = tx.Annotated[tx.Union[int, str], "meta"]
+    assert get_from_registry(query, registry) == "union"
+
+
+def test_registry_does_not_crash_on_an_unhashable_query() -> None:
+    # A hint the callers legitimately pass in that cannot be hashed must
+    # fall through, not raise. `Annotated` with mutable metadata is not an
+    # exact key, but its inner type still resolves.
+    registry = {int: "number", object: "any"}
+    annotated = tx.Annotated[int, [1, 2]]
+    assert get_from_registry(annotated, registry) == "number"
+    # A bare unhashable object (the sibling bags pass metadata straight in)
+    # is no key and matches no origin -- `None`, never a `TypeError`.
+    assert get_from_registry([1, 2], registry) is None
+
+
+def test_registry_exact_pass_is_purely_additive() -> None:
+    # The exact pass is purely additive: with only bare-origin keys (what
+    # the sibling bags register), a parameterised query still resolves to
+    # its origin exactly as before.
+    registry = {
+        tx.Union: "union-origin",
+        tx.Literal: "literal-origin",
+        tx.TypeVar: "typevar-origin",
+        object: "any",
+    }
+    assert get_from_registry(tx.Union[int, str], registry) == "union-origin"
+    assert get_from_registry(tx.Literal[1, 2], registry) == "literal-origin"
+    assert get_from_registry(_T, registry) == "typevar-origin"
+
+
+def test_registry_annotated_key_still_wins_over_its_inner_type() -> None:
+    # With a bare `Annotated` key present (as the bags register), an
+    # `Annotated[int, ...]` query must reach that key, not the plain `int`
+    # one -- otherwise metadata handling is silently skipped.
+    registry = {tx.Annotated: "annotated", int: "number", object: "any"}
+    query = tx.Annotated[int, "meta"]
+    assert get_from_registry(query, registry) == "annotated"
+
+
+@pytest.mark.skipif(
+    sys.version_info < (3, 9), reason="list[int] needs PEP 585 (3.9+)"
+)
+def test_registry_matches_a_new_style_generic_to_its_typing_key() -> None:
+    # `list[int]` is a different object from `List[int]` and not equal to
+    # it, so a registry keyed in the typing spelling must still be reached
+    # by a new-style query.
+    registry = {
+        tx.List[int]: "list-int",
+        tx.Dict[str, int]: "dict-str-int",
+        tx.Type[int]: "type-int",
+        object: "any",
+    }
+    assert get_from_registry(list[int], registry) == "list-int"
+    assert get_from_registry(dict[str, int], registry) == "dict-str-int"
+    assert get_from_registry(type[int], registry) == "type-int"
+    # Idempotent for a query already in the typing spelling.
+    assert get_from_registry(tx.List[int], registry) == "list-int"
+
+
+@pytest.mark.skipif(
+    sys.version_info < (3, 9), reason="list[int] needs PEP 585 (3.9+)"
+)
+def test_registry_rewrites_a_new_style_generic_recursively() -> None:
+    # The rewrite reaches through Optional/Union/Annotated and nesting, so
+    # a new-style generic anywhere inside still meets its typing key.
+    registry = {
+        tx.Optional[tx.List[int]]: "optional",
+        tx.Union[tx.List[int], tx.Dict[str, int]]: "union",
+        tx.List[tx.List[int]]: "list-of-list",
+        tx.Annotated[tx.List[int], "m"]: "annotated",
+        tx.Dict[str, tx.Optional[tx.List[int]]]: "deep",
+        object: "any",
+    }
+    assert get_from_registry(tx.Optional[list[int]], registry) == "optional"
+    if sys.version_info >= (3, 10):  # PEP 604 `X | Y`
+        assert get_from_registry(list[int] | None, registry) == "optional"
+    both = tx.Union[list[int], dict[str, int]]
+    assert get_from_registry(both, registry) == "union"
+    assert get_from_registry(list[list[int]], registry) == "list-of-list"
+    annotated = tx.Annotated[list[int], "m"]
+    assert get_from_registry(annotated, registry) == "annotated"
+    deep = dict[str, tx.Optional[list[int]]]
+    assert get_from_registry(deep, registry) == "deep"
+
+
+@pytest.mark.skipif(
+    sys.version_info < (3, 9), reason="list[int] needs PEP 585 (3.9+)"
+)
+def test_registry_rewrites_inside_callable() -> None:
+    # `Callable`'s parameters are a list and its return a type; a new-style
+    # generic in either is rewritten, and `...` is left whole.
+    registry = {
+        tx.Callable[[tx.List[int]], str]: "params",
+        tx.Callable[..., tx.List[int]]: "ret",
+        object: "any",
+    }
+    params = tx.Callable[[list[int]], str]
+    assert get_from_registry(params, registry) == "params"
+    assert get_from_registry(tx.Callable[..., list[int]], registry) == "ret"
+
+
+@pytest.mark.skipif(
+    sys.version_info < (3, 9), reason="abc/re generics need __class_getitem__"
+)
+def test_registry_new_style_generic_from_abc_and_re_origins() -> None:
+    # The origin table covers the abc / re / contextlib generics too, so a
+    # concrete `collections.abc.Collection[int]` meets its typing key.
+    registry = {
+        tx.Collection[int]: "collection",
+        tx.Pattern[str]: "pattern",
+        object: "any",
+    }
+    assert get_from_registry(abc.Collection[int], registry) == "collection"
+    assert get_from_registry(re.Pattern[str], registry) == "pattern"
+
+
+def test_registry_survives_an_origin_that_refuses_the_rewrite() -> None:
+    # Rewriting the query calls the origin's `__class_getitem__`; one that
+    # raises must not turn a lookup that would have matched by origin into
+    # an error.
+    class Picky:
+        def __class_getitem__(cls, item: object) -> object:
+            raise ValueError("no generics here")
+
+    assert get_from_registry(Picky, {Picky: "picky", object: "any"}) == "picky"
+
+
+@pytest.mark.skipif(
+    sys.version_info < (3, 9), reason="list[int] needs PEP 585 (3.9+)"
+)
+def test_registry_new_style_generic_still_falls_back_to_its_origin() -> None:
+    # With only a bare `list` key, a `list[int]` query resolves through its
+    # origin exactly as before -- the typing rewrite does not get in the
+    # way when no specific key exists.
+    registry = {list: "bare", object: "any"}
+    assert get_from_registry(list[int], registry) == "bare"
 
 
 def test_typeddict_is_one_step_from_TypedDict() -> None:

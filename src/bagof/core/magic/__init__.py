@@ -31,10 +31,12 @@ __all__ = [
 
 # stdlib
 import collections
+import contextlib
 import copy
 import inspect
 import math
 import numbers
+import re
 import typing
 from collections import abc
 
@@ -588,6 +590,10 @@ def get_from_registry(hint: tx.Any, registry: dict) -> tx.Any:
     found for it directly, the search is retried against its unwrapped
     hint.
 
+    Exact matches are by hint *equality*, so `List[int]` and `list[int]`
+    are different keys, but `Union[int, str]` and `Union[str, int]` are the
+    same one.
+
     !!! example
         ```pycon
         >>> registry = {int: "number", object: "any"}
@@ -597,14 +603,27 @@ def get_from_registry(hint: tx.Any, registry: dict) -> tx.Any:
         'any'
         ```
     """
+    # Exact-identity pass, before any origin is taken. `_get_best_match`
+    # compares origins, which erases what a Union/Literal/TypeVar or a
+    # parameterised generic actually is -- so a registry key that is one of
+    # those is only reachable here, though the "exact matches preferred"
+    # promise above is meant to hold for every hint.
+    match = _exact_from_registry(hint, registry)
+    if match is not UNSET:
+        return match
+
     # First naive pass
     best_match, best_dist = _get_best_match(hint, registry)
 
-    # Second pass, where Annotated hints are unwrapped.
-    # We only use the resulting match if it is better than the first pass.
+    # Second pass, where Annotated hints are unwrapped. First for an exact
+    # key the inner hint is (a specific Union/... carried under metadata),
+    # then for a better origin match. Only used if it beats the first pass.
     if best_dist != 0 and safe_get_origin(hint) is tx.Annotated:
-        hint = safe_get_origin(hint, unwrap=tx.Annotated)
-        better_match, better_dist = _get_best_match(hint, registry)
+        inner = unwrap(hint, tx.Annotated)
+        match = _exact_from_registry(inner, registry)
+        if match is not UNSET:
+            return match
+        better_match, better_dist = _get_best_match(inner, registry)
         if better_dist < best_dist:
             best_match, best_dist = better_match, better_dist
 
@@ -612,6 +631,27 @@ def get_from_registry(hint: tx.Any, registry: dict) -> tx.Any:
         return registry[best_match]
 
     return None
+
+
+def _exact_from_registry(hint: tx.Any, registry: dict) -> tx.Any:
+    """The value `hint` is registered under by equality, or `UNSET`.
+
+    A `Union`/`Literal` compares order-insensitively and a `TypeVar` by
+    identity, which is exactly the "same hint" test wanted. A new-style
+    generic (`list[int]`) is also tried in its `typing` spelling
+    (`List[int]`), so a registry keyed one way is reached by a query
+    written the other. A hint that cannot be hashed -- `Annotated` with
+    mutable metadata, `Literal[[...]]`, or a bare metadata object the bags
+    pass straight in -- is simply not an exact key, so the lookup falls
+    through rather than raising.
+    """
+    for candidate in (hint, _typing_spelling(hint)):
+        try:
+            if candidate in registry:
+                return registry[candidate]
+        except TypeError:
+            pass
+    return UNSET
 
 
 def _get_best_match(hint: tx.Any, registry: dict) -> tx.Tuple[tx.Any, float]:
@@ -1451,7 +1491,12 @@ _TYPE2HINT_NAMES = (
     (set, "Set"),
     (tuple, "Tuple"),
     (type, "Type"),
+    (abc.AsyncGenerator, "AsyncGenerator"),
+    (abc.AsyncIterable, "AsyncIterable"),
+    (abc.AsyncIterator, "AsyncIterator"),
+    (abc.Awaitable, "Awaitable"),
     (abc.Callable, "Callable"),
+    (abc.Collection, "Collection"),
     (abc.Container, "Container"),
     (abc.Coroutine, "Coroutine"),
     (abc.Generator, "Generator"),
@@ -1475,6 +1520,10 @@ _TYPE2HINT_NAMES = (
     (collections.OrderedDict, "OrderedDict"),
     (collections.defaultdict, "DefaultDict"),
     (collections.deque, "Deque"),
+    (contextlib.AbstractContextManager, "ContextManager"),
+    (contextlib.AbstractAsyncContextManager, "AsyncContextManager"),
+    (re.Match, "Match"),
+    (re.Pattern, "Pattern"),
 )
 """
 The type hint each non-subscriptable type maps to, by name.
@@ -1523,3 +1572,57 @@ def type2hint(x: tx.Any) -> tx.Any:
     except TypeError:
         # Unhashable: cannot be a key, so there is nothing to look up.
         return x
+
+
+def _typing_spelling(hint: tx.Any) -> tx.Any:
+    """`list[int]` rewritten as `List[int]`, recursively; else unchanged.
+
+    A parameterised builtin or abc generic (`list[int]`, `dict[str, int]`)
+    is a different object from its `typing` twin (`List[int]`,
+    `Dict[str, int]`) and does not compare equal to it, so a registry keyed
+    one way misses a query written the other. Rewriting the new-style form
+    into the `typing` spelling lets the two meet.
+
+    The rewrite reaches all the way down, so a new-style generic nested
+    inside a `Union`, `Optional`, `Annotated`, `Callable`, or another
+    generic (`Optional[list[int]]`, `Callable[[list[int]], str]`) is
+    rewritten too. `Literal` is left alone: its arguments are values, not
+    types. It rewrites the query only, so it reaches a registry keyed in
+    the `typing` spelling from a new-style query, not the other way round.
+    `list[int]` does not exist before Python 3.9, so there is nothing to
+    rewrite there.
+    """
+    origin = tx.get_origin(hint)
+    if origin is None or origin is tx.Literal:
+        return hint
+    args = tx.get_args(hint)
+    try:
+        if not args:
+            # `tuple[()]` reports no arguments from Python 3.11 on, but it
+            # is the empty-tuple type and still differs from `Tuple[()]`.
+            return tx.Tuple[()] if origin is tuple else hint
+        if origin is tx.Annotated:
+            # `(type, *metadata)`: rewrite the type, keep the metadata.
+            inner = _typing_spelling(args[0])
+            if inner == args[0]:
+                return hint
+            return tx.Annotated[(inner, *args[1:])]
+        if origin is abc.Callable and len(args) == 2:
+            # `(parameters, return)`: the parameters are a list of types,
+            # or `...` / a `ParamSpec`, which are left whole.
+            params, ret = args
+            if isinstance(params, list):
+                params = [_typing_spelling(each) for each in params]
+            return tx.Callable[(params, _typing_spelling(ret))]
+        spelled = tuple(_typing_spelling(arg) for arg in args)
+        if origin in UNION_TYPES:
+            return tx.Union[spelled]
+        # A builtin/abc container gets its `typing` spelling; any other
+        # generic (a user `Generic`) is rebuilt on its own origin.
+        typing_origin = _TYPE2HINT.get(origin, origin)
+        return typing_origin[spelled if len(spelled) > 1 else spelled[0]]
+    except Exception:
+        # A rebuild that fails -- a user origin that refuses these
+        # arguments, an exotic `Callable` form -- leaves the hint as it
+        # was, to be matched by its origin instead.
+        return hint
