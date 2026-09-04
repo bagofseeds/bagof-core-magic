@@ -74,16 +74,17 @@ REAL_TYPES = (
 )
 """The real-number types [`eq_safenan`][] recognises."""
 
-_SPECIAL_FORMS = (tx.Any, tx.Optional, tx.Literal) + UNION_TYPES
+_SPECIAL_FORMS = (tx.Any, tx.Optional, tx.Literal, tx.Annotated) + UNION_TYPES
 """
 The typing constructs that must never be treated as classes.
 
 Several of these *are* classes on some Python versions and not on others
-- [`Any`][typing.Any] became one in 3.11, and [`Union`][typing.Union]
-became one in 3.14, when it merged with
-[`types.UnionType`][] - so `#!python isinstance(hint, type)` silently
-gives different answers across the versions this package supports. Pin
-the answer instead of inheriting it.
+- [`Any`][typing.Any] became one in 3.11, [`Annotated`][typing.Annotated]
+was one through 3.12 but not from 3.13, and [`Union`][typing.Union] became
+one in 3.14, when it merged with [`types.UnionType`][] - so
+`#!python isinstance(hint, type)` silently gives different answers across
+the versions this package supports. Pin the answer instead of inheriting
+it.
 """
 
 
@@ -603,6 +604,10 @@ def get_from_registry(hint: tx.Any, registry: dict) -> tx.Any:
         'any'
         ```
     """
+    # A bare `None` means `NoneType` as a hint, so it is matched as one --
+    # the same normalisation a `MagicHint` built from it would apply.
+    hint = normalise_hint(hint)
+
     # Exact-identity pass, before any origin is taken. `_get_best_match`
     # compares origins, which erases what a Union/Literal/TypeVar or a
     # parameterised generic actually is -- so a registry key that is one of

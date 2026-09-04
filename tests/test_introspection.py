@@ -242,6 +242,22 @@ def test_registry_new_style_generic_from_abc_and_re_origins() -> None:
     assert get_from_registry(re.Pattern[str], registry) == "pattern"
 
 
+def test_registry_ranks_an_annotated_query_by_its_inner_type() -> None:
+    # With no `Annotated` handler, an `Annotated[bool, ...]` query resolves
+    # to `int` (bool's superclass) on every Python -- `Annotated` used to
+    # count as a class on 3.8-3.12 and win `object` at distance 1 there.
+    registry = {int: "number", object: "any"}
+    assert get_from_registry(tx.Annotated[bool, "x"], registry) == "number"
+
+
+def test_registry_matches_none_as_nonetype() -> None:
+    # A bare `None` means `NoneType` as a hint.
+    none_type = type(None)
+    registry = {none_type: "none", object: "any"}
+    assert get_from_registry(None, registry) == "none"
+    assert get_from_registry(None, {object: "any"}) == "any"
+
+
 def test_registry_survives_an_origin_that_refuses_the_rewrite() -> None:
     # Rewriting the query calls the origin's `__class_getitem__`; one that
     # raises must not turn a lookup that would have matched by origin into
