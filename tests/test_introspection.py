@@ -1,6 +1,8 @@
 """Tests for the hint-introspection helpers."""
 
 # dependencies
+import sys
+
 import pytest
 import typing_extensions as tx
 
@@ -159,6 +161,39 @@ def test_registry_annotated_key_still_wins_over_its_inner_type() -> None:
     registry = {tx.Annotated: "annotated", int: "number", object: "any"}
     query = tx.Annotated[int, "meta"]
     assert get_from_registry(query, registry) == "annotated"
+
+
+@pytest.mark.skipif(
+    sys.version_info < (3, 9), reason="list[int] needs PEP 585 (3.9+)"
+)
+def test_registry_matches_a_new_style_generic_to_its_typing_key() -> None:
+    # `list[int]` is a different object from `List[int]` and not equal to
+    # it, so a registry keyed in the typing spelling must still be reached
+    # by a new-style query.
+    registry = {
+        tx.List[int]: "list-int",
+        tx.Dict[str, int]: "dict-str-int",
+        tx.Type[int]: "type-int",
+        object: "any",
+    }
+    assert get_from_registry(list[int], registry) == "list-int"
+    assert get_from_registry(dict[str, int], registry) == "dict-str-int"
+    assert get_from_registry(type[int], registry) == "type-int"
+    # Nested, and idempotent for a query already in the typing spelling.
+    nested = {tx.Dict[str, tx.List[int]]: "nested"}
+    assert get_from_registry(dict[str, list[int]], nested) == "nested"
+    assert get_from_registry(tx.List[int], registry) == "list-int"
+
+
+@pytest.mark.skipif(
+    sys.version_info < (3, 9), reason="list[int] needs PEP 585 (3.9+)"
+)
+def test_registry_new_style_generic_still_falls_back_to_its_origin() -> None:
+    # With only a bare `list` key, a `list[int]` query resolves through its
+    # origin exactly as before -- the typing rewrite does not get in the
+    # way when no specific key exists.
+    registry = {list: "bare", object: "any"}
+    assert get_from_registry(list[int], registry) == "bare"
 
 
 def test_typeddict_is_one_step_from_TypedDict() -> None:

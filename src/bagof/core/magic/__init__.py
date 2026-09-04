@@ -635,16 +635,20 @@ def _exact_from_registry(hint: tx.Any, registry: dict) -> tx.Any:
     """The value `hint` is registered under by equality, or `UNSET`.
 
     A `Union`/`Literal` compares order-insensitively and a `TypeVar` by
-    identity, which is exactly the "same hint" test wanted. A hint that
-    cannot be hashed -- `Annotated` with mutable metadata, `Literal[[...]]`,
-    or a bare metadata object the bags pass straight in -- is simply not an
-    exact key, so the lookup falls through rather than raising.
+    identity, which is exactly the "same hint" test wanted. A new-style
+    generic (`list[int]`) is also tried in its `typing` spelling
+    (`List[int]`), so a registry keyed one way is reached by a query
+    written the other. A hint that cannot be hashed -- `Annotated` with
+    mutable metadata, `Literal[[...]]`, or a bare metadata object the bags
+    pass straight in -- is simply not an exact key, so the lookup falls
+    through rather than raising.
     """
-    try:
-        if hint in registry:
-            return registry[hint]
-    except TypeError:
-        pass
+    for candidate in (hint, _typing_spelling(hint)):
+        try:
+            if candidate in registry:
+                return registry[candidate]
+        except TypeError:
+            pass
     return UNSET
 
 
@@ -1557,3 +1561,32 @@ def type2hint(x: tx.Any) -> tx.Any:
     except TypeError:
         # Unhashable: cannot be a key, so there is nothing to look up.
         return x
+
+
+def _typing_spelling(hint: tx.Any) -> tx.Any:
+    """`list[int]` rewritten as `List[int]`, recursively; else unchanged.
+
+    A parameterised builtin or abc generic (`list[int]`, `dict[str, int]`)
+    is a different object from its `typing` twin (`List[int]`,
+    `Dict[str, int]`) and does not compare equal to it, so a registry keyed
+    one way misses a query written the other. Rewriting the new-style form
+    into the `typing` spelling lets the two meet.
+
+    A special form (`Union`, `Literal`, `Annotated`) is left alone -- its
+    equality already crosses the two spellings, or it is handled elsewhere
+    -- and so is `Callable`, whose arguments do not line up positionally
+    for a clean rebuild. `list[int]` does not exist before Python 3.9, so
+    there is nothing to rewrite there.
+    """
+    origin = tx.get_origin(hint)
+    typing_origin = _TYPE2HINT.get(origin)
+    if typing_origin is None or origin is abc.Callable:
+        return hint
+    args = tx.get_args(hint)
+    if not args:
+        return hint
+    try:
+        spelled = tuple(_typing_spelling(arg) for arg in args)
+        return typing_origin[spelled if len(spelled) > 1 else spelled[0]]
+    except TypeError:
+        return hint
