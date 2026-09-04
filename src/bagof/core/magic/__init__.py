@@ -1572,21 +1572,33 @@ def _typing_spelling(hint: tx.Any) -> tx.Any:
     one way misses a query written the other. Rewriting the new-style form
     into the `typing` spelling lets the two meet.
 
-    A special form (`Union`, `Literal`, `Annotated`) is left alone -- its
-    equality already crosses the two spellings, or it is handled elsewhere
-    -- and so is `Callable`, whose arguments do not line up positionally
-    for a clean rebuild. `list[int]` does not exist before Python 3.9, so
-    there is nothing to rewrite there.
+    The rewrite reaches all the way down, so a new-style generic nested
+    inside a `Union`, `Optional`, `Annotated`, or another generic
+    (`Optional[list[int]]`, `list[list[int]]`) is rewritten too. `Literal`
+    (whose arguments are values, not types) and `Callable` (whose first
+    argument is a parameter *list*, not a type) are left as they are.
+    `list[int]` does not exist before Python 3.9, so there is nothing to
+    rewrite there.
     """
     origin = tx.get_origin(hint)
-    typing_origin = _TYPE2HINT.get(origin)
-    if typing_origin is None or origin is abc.Callable:
+    if origin is None:
         return hint
     args = tx.get_args(hint)
-    if not args:
+    if not args or origin is tx.Literal or origin is abc.Callable:
         return hint
     try:
+        if origin is tx.Annotated:
+            # `(type, *metadata)`: rewrite the type, keep the metadata.
+            inner = _typing_spelling(args[0])
+            if inner is args[0]:
+                return hint
+            return tx.Annotated[(inner, *args[1:])]
         spelled = tuple(_typing_spelling(arg) for arg in args)
+        if origin in UNION_TYPES:
+            return tx.Union[spelled]
+        # A builtin/abc container gets its `typing` spelling; any other
+        # generic (a user `Generic`) is rebuilt on its own origin.
+        typing_origin = _TYPE2HINT.get(origin, origin)
         return typing_origin[spelled if len(spelled) > 1 else spelled[0]]
     except TypeError:
         return hint

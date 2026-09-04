@@ -179,10 +179,34 @@ def test_registry_matches_a_new_style_generic_to_its_typing_key() -> None:
     assert get_from_registry(list[int], registry) == "list-int"
     assert get_from_registry(dict[str, int], registry) == "dict-str-int"
     assert get_from_registry(type[int], registry) == "type-int"
-    # Nested, and idempotent for a query already in the typing spelling.
-    nested = {tx.Dict[str, tx.List[int]]: "nested"}
-    assert get_from_registry(dict[str, list[int]], nested) == "nested"
+    # Idempotent for a query already in the typing spelling.
     assert get_from_registry(tx.List[int], registry) == "list-int"
+
+
+@pytest.mark.skipif(
+    sys.version_info < (3, 9), reason="list[int] needs PEP 585 (3.9+)"
+)
+def test_registry_rewrites_a_new_style_generic_recursively() -> None:
+    # The rewrite reaches through Optional/Union/Annotated and nesting, so
+    # a new-style generic anywhere inside still meets its typing key.
+    registry = {
+        tx.Optional[tx.List[int]]: "optional",
+        tx.Union[tx.List[int], tx.Dict[str, int]]: "union",
+        tx.List[tx.List[int]]: "list-of-list",
+        tx.Annotated[tx.List[int], "m"]: "annotated",
+        tx.Dict[str, tx.Optional[tx.List[int]]]: "deep",
+        object: "any",
+    }
+    assert get_from_registry(tx.Optional[list[int]], registry) == "optional"
+    if sys.version_info >= (3, 10):  # PEP 604 `X | Y`
+        assert get_from_registry(list[int] | None, registry) == "optional"
+    both = tx.Union[list[int], dict[str, int]]
+    assert get_from_registry(both, registry) == "union"
+    assert get_from_registry(list[list[int]], registry) == "list-of-list"
+    annotated = tx.Annotated[list[int], "m"]
+    assert get_from_registry(annotated, registry) == "annotated"
+    deep = dict[str, tx.Optional[list[int]]]
+    assert get_from_registry(deep, registry) == "deep"
 
 
 @pytest.mark.skipif(
