@@ -588,6 +588,10 @@ def get_from_registry(hint: tx.Any, registry: dict) -> tx.Any:
     found for it directly, the search is retried against its unwrapped
     hint.
 
+    Exact matches are by hint *equality*, so `List[int]` and `list[int]`
+    are different keys, but `Union[int, str]` and `Union[str, int]` are the
+    same one.
+
     !!! example
         ```pycon
         >>> registry = {int: "number", object: "any"}
@@ -597,14 +601,27 @@ def get_from_registry(hint: tx.Any, registry: dict) -> tx.Any:
         'any'
         ```
     """
+    # Exact-identity pass, before any origin is taken. `_get_best_match`
+    # compares origins, which erases what a Union/Literal/TypeVar or a
+    # parameterised generic actually is -- so a registry key that is one of
+    # those is only reachable here, though the "exact matches preferred"
+    # promise above is meant to hold for every hint.
+    match = _exact_from_registry(hint, registry)
+    if match is not UNSET:
+        return match
+
     # First naive pass
     best_match, best_dist = _get_best_match(hint, registry)
 
-    # Second pass, where Annotated hints are unwrapped.
-    # We only use the resulting match if it is better than the first pass.
+    # Second pass, where Annotated hints are unwrapped. First for an exact
+    # key the inner hint is (a specific Union/... carried under metadata),
+    # then for a better origin match. Only used if it beats the first pass.
     if best_dist != 0 and safe_get_origin(hint) is tx.Annotated:
-        hint = safe_get_origin(hint, unwrap=tx.Annotated)
-        better_match, better_dist = _get_best_match(hint, registry)
+        inner = unwrap(hint, tx.Annotated)
+        match = _exact_from_registry(inner, registry)
+        if match is not UNSET:
+            return match
+        better_match, better_dist = _get_best_match(inner, registry)
         if better_dist < best_dist:
             best_match, best_dist = better_match, better_dist
 
@@ -612,6 +629,23 @@ def get_from_registry(hint: tx.Any, registry: dict) -> tx.Any:
         return registry[best_match]
 
     return None
+
+
+def _exact_from_registry(hint: tx.Any, registry: dict) -> tx.Any:
+    """The value `hint` is registered under by equality, or `UNSET`.
+
+    A `Union`/`Literal` compares order-insensitively and a `TypeVar` by
+    identity, which is exactly the "same hint" test wanted. A hint that
+    cannot be hashed -- `Annotated` with mutable metadata, `Literal[[...]]`,
+    or a bare metadata object the bags pass straight in -- is simply not an
+    exact key, so the lookup falls through rather than raising.
+    """
+    try:
+        if hint in registry:
+            return registry[hint]
+    except TypeError:
+        pass
+    return UNSET
 
 
 def _get_best_match(hint: tx.Any, registry: dict) -> tx.Tuple[tx.Any, float]:

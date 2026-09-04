@@ -81,6 +81,86 @@ def test_registry_documented_example_is_unchanged() -> None:
     assert get_from_registry(str, registry) == "any"
 
 
+# --- registry: exact matches for hints an origin would erase -----------
+
+_T = tx.TypeVar("_T")
+_S = tx.TypeVar("_S")
+
+
+@pytest.mark.parametrize(
+    "query,expected",
+    [
+        # A specific Union/Literal/TypeVar/parameterised generic is only
+        # reachable by identity -- its origin (Union/Literal/list) is not it.
+        (tx.Union[int, str], "union"),
+        # Union membership is order-insensitive, so a reordered query hits
+        # the same key.
+        (tx.Union[str, int], "union"),
+        (tx.Literal["a", "b"], "literal"),
+        (_T, "typevar-T"),
+        (tx.List[int], "list-int"),
+        # A different typevar is not the registered one.
+        (_S, "typevar-any"),
+    ],
+)
+def test_registry_matches_a_specific_hint_key(
+    query: tx.Any, expected: str
+) -> None:
+    registry = {
+        tx.Union[int, str]: "union",
+        tx.Literal["a", "b"]: "literal",
+        _T: "typevar-T",
+        tx.List[int]: "list-int",
+        tx.TypeVar: "typevar-any",
+        object: "any",
+    }
+    assert get_from_registry(query, registry) == expected
+
+
+def test_registry_specific_key_survives_an_annotated_wrapper() -> None:
+    # The metadata is transparent: a specific inner key is reached through
+    # `Annotated`, once the metadata itself has been accounted for.
+    registry = {tx.Union[int, str]: "union", object: "any"}
+    query = tx.Annotated[tx.Union[int, str], "meta"]
+    assert get_from_registry(query, registry) == "union"
+
+
+def test_registry_does_not_crash_on_an_unhashable_query() -> None:
+    # A hint the callers legitimately pass in that cannot be hashed must
+    # fall through, not raise. `Annotated` with mutable metadata is not an
+    # exact key, but its inner type still resolves.
+    registry = {int: "number", object: "any"}
+    annotated = tx.Annotated[int, [1, 2]]
+    assert get_from_registry(annotated, registry) == "number"
+    # A bare unhashable object (the sibling bags pass metadata straight in)
+    # is no key and matches no origin -- `None`, never a `TypeError`.
+    assert get_from_registry([1, 2], registry) is None
+
+
+def test_registry_exact_pass_is_purely_additive() -> None:
+    # The exact pass is purely additive: with only bare-origin keys (what
+    # the sibling bags register), a parameterised query still resolves to
+    # its origin exactly as before.
+    registry = {
+        tx.Union: "union-origin",
+        tx.Literal: "literal-origin",
+        tx.TypeVar: "typevar-origin",
+        object: "any",
+    }
+    assert get_from_registry(tx.Union[int, str], registry) == "union-origin"
+    assert get_from_registry(tx.Literal[1, 2], registry) == "literal-origin"
+    assert get_from_registry(_T, registry) == "typevar-origin"
+
+
+def test_registry_annotated_key_still_wins_over_its_inner_type() -> None:
+    # With a bare `Annotated` key present (as the bags register), an
+    # `Annotated[int, ...]` query must reach that key, not the plain `int`
+    # one -- otherwise metadata handling is silently skipped.
+    registry = {tx.Annotated: "annotated", int: "number", object: "any"}
+    query = tx.Annotated[int, "meta"]
+    assert get_from_registry(query, registry) == "annotated"
+
+
 def test_typeddict_is_one_step_from_TypedDict() -> None:
     # Regression: `_type_dist` used `tx.is_typeddict`, which is False for
     # `TypedDict` itself, so a typeddict subclass was measured down its
