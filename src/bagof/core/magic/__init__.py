@@ -27,6 +27,14 @@ __all__ = [
     "REAL_TYPES",
     "UNION_TYPES",
     "UnionType",
+    "clear_pending",
+    "defer",
+    "find_name",
+    "has_module",
+    "is_forward_ref",
+    "lazy_import",
+    "pending",
+    "resolve_pending",
 ]
 
 # stdlib
@@ -43,22 +51,27 @@ from collections import abc
 # dependencies
 import typing_extensions as tx
 
+# locals
+from ._lazy import (
+    clear_pending,
+    defer,
+    find_name,
+    has_module,
+    is_forward_ref,
+    lazy_import,
+    pending,
+    resolve_pending,
+)
+
 # optionals
 if tx.TYPE_CHECKING:
     from types import NoneType, UnionType
-
-    import numpy as _np
 else:
     try:
         from types import NoneType, UnionType
     except ImportError:  # pragma: no cover  -- Python < 3.10
         NoneType = type(None)
         UnionType = tx.Union
-
-    try:
-        import numpy as _np
-    except ImportError:  # pragma: no cover  -- numpy is optional
-        _np = None
 
 # typing
 T = tx.TypeVar("T", covariant=True)
@@ -69,10 +82,14 @@ UNION_TYPES = (
 )
 """The union spellings this package understands."""
 
-REAL_TYPES = (
-    (numbers.Real, _np.floating) if _np is not None else (numbers.Real,)
-)
-"""The real-number types [`eq_safenan`][] recognises."""
+REAL_TYPES = (numbers.Real,)
+"""
+The real-number types [`eq_safenan`][] recognises.
+
+!!! note
+    NumPy registers `numpy.floating` as a [`numbers.Real`][], so NumPy
+    floats are recognised without this package importing NumPy.
+"""
 
 _SPECIAL_FORMS = (tx.Any, tx.Optional, tx.Literal, tx.Annotated) + UNION_TYPES
 """
@@ -595,6 +612,16 @@ def get_from_registry(hint: tx.Any, registry: dict) -> tx.Any:
     are different keys, but `Union[int, str]` and `Union[str, int]` are the
     same one.
 
+    Pending lazy keys (see [`defer`][]) whose target has been imported
+    since are moved into their registry first, so every caller sees them.
+
+    Two keys at the same distance from `hint` are told apart by
+    specificity (a subclass key beats its superclass), and then by
+    registry order. Distances along an MRO are all different, so a true
+    tie only happens between keys `hint` is a *virtual* subclass of (such
+    as two unrelated ABCs it is registered with). A lazy key enters the
+    registry when it resolves, so that is the position it ties at.
+
     !!! example
         ```pycon
         >>> registry = {int: "number", object: "any"}
@@ -604,6 +631,8 @@ def get_from_registry(hint: tx.Any, registry: dict) -> tx.Any:
         'any'
         ```
     """
+    resolve_pending()
+
     # A bare `None` means `NoneType` as a hint, so it is matched as one --
     # the same normalisation a `MagicHint` built from it would apply.
     hint = normalise_hint(hint)
