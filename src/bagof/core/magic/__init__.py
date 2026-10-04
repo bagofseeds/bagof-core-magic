@@ -27,17 +27,31 @@ __all__ = [
     "REAL_TYPES",
     "UNION_TYPES",
     "UnionType",
+    "defer",
+    "find_name",
+    "has_module",
+    "is_forward_ref",
+    "lazy_import",
+    "pending",
+    "resolve_pending",
 ]
 
 # stdlib
 import collections
 import contextlib
 import copy
+import importlib
+import importlib.util
 import inspect
 import math
 import numbers
 import re
+import sys
+import threading
+import types
 import typing
+import warnings
+import weakref
 from collections import abc
 
 # dependencies
@@ -595,6 +609,16 @@ def get_from_registry(hint: tx.Any, registry: dict) -> tx.Any:
     are different keys, but `Union[int, str]` and `Union[str, int]` are the
     same one.
 
+    Pending lazy keys (see [`defer`][]) whose target has been imported
+    since are moved into their registry first, so every caller sees them.
+
+    Two keys at the same distance from `hint` are told apart by
+    specificity (a subclass key beats its superclass), and then by
+    registry order. Distances along an MRO are all different, so a true
+    tie only happens between keys `hint` is a *virtual* subclass of (such
+    as two unrelated ABCs it is registered with). A lazy key enters the
+    registry when it resolves, so that is the position it ties at.
+
     !!! example
         ```pycon
         >>> registry = {int: "number", object: "any"}
@@ -604,6 +628,8 @@ def get_from_registry(hint: tx.Any, registry: dict) -> tx.Any:
         'any'
         ```
     """
+    resolve_pending()
+
     # A bare `None` means `NoneType` as a hint, so it is matched as one --
     # the same normalisation a `MagicHint` built from it would apply.
     hint = normalise_hint(hint)
@@ -732,6 +758,322 @@ def _type_dist(subcls: type, cls: type) -> float:
             return distance
         distance += 1
     return 1000
+
+
+# --- lazy registry keys ------------------------------------------------
+#
+# A registry can be keyed by a `ForwardRef` instead of the object itself,
+# so that registering a value for a type from an optional library does not
+# import that library. The key is kept pending and moved into the registry
+# -- keyed by the object it names -- once someone else has imported it.
+# Nothing here ever imports a module or evaluates a string to resolve one.
+
+_FORWARD_REFS = tuple({typing.ForwardRef, tx.ForwardRef})
+"""The forward-reference types that make a lazy registry key."""
+
+_MISSING = object()
+"""Marker for a name that cannot be resolved (yet)."""
+
+
+class _Pending(tx.NamedTuple):
+    """A registration whose forward-reference key is not resolved yet."""
+
+    registry: tx.Callable[[], tx.Optional[dict]]
+    """Returns the registry, or `None` once it has been collected."""
+    context: tx.Optional[str]
+    """The module the name is relative to."""
+    name: str
+    """The dotted name the forward reference holds."""
+    value: tx.Any
+    """The value to register."""
+
+
+_PENDING: tx.List[_Pending] = []
+"""
+The registrations whose key is not resolved yet, oldest first. A hint of a
+type from a module that was never imported cannot reach a registry, so
+nothing is lost by waiting.
+"""
+
+_PENDING_LOCK = threading.RLock()
+"""Guards every mutation of `_PENDING`, and the registry write with it."""
+
+
+def is_forward_ref(obj: tx.Any) -> bool:
+    """Whether `obj` is a [`ForwardRef`][typing.ForwardRef] (a lazy key)."""
+    return isinstance(obj, _FORWARD_REFS)
+
+
+def _registry_ref(registry: dict) -> tx.Callable[[], tx.Optional[dict]]:
+    """A weak reference to `registry` if it takes one, else a strong one."""
+    try:
+        return weakref.ref(registry)
+    except TypeError:
+        # A plain `dict` cannot be weakly referenced (a subclass can).
+        return lambda: registry
+
+
+def defer(
+    registry: dict,
+    ref: tx.Any,
+    value: tx.Any,
+    context: tx.Optional[str] = None,
+) -> None:
+    """
+    Register `value` in `registry` under the object `ref` names, once that
+    object has been imported - see [`find_name`][] for how it is found.
+
+    This is the lazy counterpart of `#!python registry[key] = value`: if
+    the object can already be found, it is registered at once; otherwise
+    the registration is kept pending, and [`resolve_pending`][] (which
+    [`get_from_registry`][] calls before every lookup) moves it into the
+    registry as soon as the object can be found. Nothing is ever imported
+    or evaluated to find it.
+
+    !!! note "Names that only exist for type checkers"
+        A name imported under `#!python if TYPE_CHECKING:` does not exist
+        at runtime, so a key spelled with it never resolves. Use the real
+        dotted path - `ForwardRef("dask.array.Array")`, not an alias such
+        as `"da.Array"` - or `ForwardRef("Array", module="dask.array")`.
+        [`pending`][] lists the keys still waiting.
+
+    !!! note "Ordering"
+        "Last registration wins" holds as for plain keys: a newer
+        registration of the same name in the same registry replaces an
+        older pending one, and pending entries are applied oldest first.
+        Each entry takes effect when it resolves, though, so two different
+        spellings of one object (or a forward reference and a plain key
+        written while the reference could not be resolved yet) are applied
+        in resolution order. A caller writing plain keys into a registry
+        that also receives lazy ones should call [`resolve_pending`][]
+        first, so that an older lazy key that is already resolvable does
+        not override the newer plain one later.
+
+    !!! note "Lifetime"
+        A pending entry holds a weak reference to `registry` when it
+        supports one (a `dict` subclass), and is dropped once the registry
+        is collected; a plain `dict` is held strongly until the entry
+        resolves. `value` is always held strongly.
+
+    Parameters
+    ----------
+    registry : dict
+        The registry to fill.
+    ref : ForwardRef
+        The forward reference. Its `module=` (Python 3.9.7+), if set,
+        takes precedence over `context`.
+    value : Any
+        The value to register.
+    context : str, optional
+        The module a relative name is looked up in, usually the
+        `__module__` of the class being registered.
+    """
+    if not is_forward_ref(ref):
+        raise TypeError(f"Expected a ForwardRef, got {ref!r}")
+    context = getattr(ref, "__forward_module__", None) or context
+    name = ref.__forward_arg__
+    # Settle the older entries that are resolvable first, so that they do
+    # not override this newer one when they are applied later.
+    resolve_pending()
+    obj = find_name(name, context)
+    with _PENDING_LOCK:
+        # Compare names, not refs: `ForwardRef` equality also involves
+        # fields that vary across Python versions.
+        _PENDING[:] = [
+            entry for entry in _PENDING
+            if entry.registry() is not None and not (
+                entry.registry() is registry
+                and (entry.context, entry.name) == (context, name)
+            )
+        ]
+        if obj is _MISSING:
+            _PENDING.append(
+                _Pending(_registry_ref(registry), context, name, value)
+            )
+        else:
+            registry[obj] = value
+
+
+def resolve_pending() -> None:
+    """
+    Move the pending registrations that can now be resolved into their
+    registry, oldest first. Returns at once when nothing is pending.
+
+    [`get_from_registry`][] calls this before every lookup, so a caller
+    only needs it before reading a registry directly.
+
+    !!! note
+        A name that resolves to an unhashable object cannot key a
+        registry: its entry is dropped with a [`RuntimeWarning`][].
+    """
+    if not _PENDING:
+        return
+    with _PENDING_LOCK:
+        snapshot = list(_PENDING)
+    # Look the names up outside the lock: walking a class attribute may
+    # run arbitrary code (descriptors, metaclass `__getattr__`).
+    found = []
+    for entry in snapshot:
+        if entry.registry() is None:
+            found.append((entry, _MISSING))
+            continue
+        obj = find_name(entry.name, entry.context)
+        if obj is not _MISSING:
+            found.append((entry, obj))
+    if not found:
+        return
+    with _PENDING_LOCK:
+        for entry, obj in found:
+            # Identity: another thread may have resolved this entry, or
+            # replaced it with a newer registration, in the meantime.
+            index = next(
+                (i for i, e in enumerate(_PENDING) if e is entry), None
+            )
+            if index is None:
+                continue
+            del _PENDING[index]
+            registry = entry.registry()
+            if registry is None or obj is _MISSING:
+                continue
+            try:
+                registry[obj] = entry.value
+            except TypeError:
+                warnings.warn(
+                    f"Lazy registry key {entry.name!r} resolved to an "
+                    f"unhashable object {obj!r}; dropped.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+
+
+def pending(
+    registry: tx.Optional[dict] = None,
+) -> tx.List[tx.Tuple[tx.Optional[str], str, tx.Any]]:
+    """
+    The registrations still pending (in `registry`, or in any registry),
+    oldest first, as `(context_module, "dotted.name", value)`. Meant for
+    debugging a key that never resolves.
+    """
+    with _PENDING_LOCK:
+        entries = list(_PENDING)
+    out = []
+    for entry in entries:
+        target = entry.registry()
+        if target is None:
+            continue
+        if registry is None or target is registry:
+            out.append((entry.context, entry.name, entry.value))
+    return out
+
+
+def find_name(name: str, context: tx.Optional[str] = None) -> tx.Any:
+    """
+    The object a dotted name refers to, if it is already imported. Never
+    imports anything, and never evaluates the name.
+
+    1. **Relative:** the first part of the name is looked up in the
+       globals of the `context` module (if it is imported), and the rest
+       is walked as attributes. This follows the module's own runtime
+       imports, such as `#!python import numpy as np` for `"np.ndarray"`.
+    2. **Absolute:** the longest dotted prefix of the name present in
+       [`sys.modules`][] is taken, and the rest is walked as attributes.
+
+    A module is always read through its `__dict__`, so a module-level
+    `__getattr__` ([PEP 562](https://peps.python.org/pep-0562/)) cannot
+    import anything: a submodule that has not been imported yet is not
+    found.
+
+    Returns
+    -------
+    Any
+        The object, or a private marker if it cannot be found (yet).
+    """
+    parts = name.split(".")
+    # 1. relative to the context module
+    module = sys.modules.get(context) if context else None
+    if module is not None:
+        obj = _walk(module, parts)
+        if obj is not _MISSING:
+            return obj
+    # 2. absolute
+    for i in range(len(parts), 0, -1):
+        module = sys.modules.get(".".join(parts[:i]))
+        if module is not None:
+            return _walk(module, parts[i:])
+    return _MISSING
+
+
+def _walk(obj: tx.Any, attrs: tx.Iterable[str]) -> tx.Any:
+    """Walk attributes without triggering a module-level `__getattr__`."""
+    for attr in attrs:
+        if isinstance(obj, types.ModuleType):
+            obj = vars(obj).get(attr, _MISSING)
+        else:
+            obj = getattr(obj, attr, _MISSING)
+        if obj is _MISSING:
+            # Not imported yet, or still initialising.
+            break
+    return obj
+
+
+def has_module(name: str) -> bool:
+    """
+    Whether the top-level package of `name` can be imported, without
+    importing it.
+
+    Only the top-level name is looked up - finding a submodule's spec
+    would import its parent package - so `#!python has_module("dask.array")`
+    tells whether `dask` is installed.
+    """
+    try:
+        return importlib.util.find_spec(name.partition(".")[0]) is not None
+    except (ImportError, ValueError):  # pragma: no cover
+        return False
+
+
+def _import_name(name: str) -> tx.Any:
+    """Import the object named by a fully-qualified dotted name."""
+    first, *rest = name.split(".")
+    obj = importlib.import_module(first)
+    for attr in rest:
+        try:
+            obj = getattr(obj, attr)
+        except AttributeError:
+            if not isinstance(obj, types.ModuleType):
+                raise
+            # A submodule that has not been imported yet.
+            obj = importlib.import_module(f"{obj.__name__}.{attr}")
+    return obj
+
+
+class lazy_import:
+    """
+    Class attribute holding an object that is only imported on first
+    access, so that defining a class for an optional library does not
+    import it.
+
+    The name must be fully qualified (`"package.module.Name"`); it is
+    imported the first time the attribute is read, and kept.
+
+    !!! example
+        ```python
+        class ToDaskArray(ArrayConverter):
+            DEFAULT = lazy_import("dask.array.Array")
+        ```
+    """
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def __get__(self, obj: tx.Any, owner: tx.Any = None) -> tx.Any:
+        # Importing twice (two threads racing here) is harmless: the
+        # import system hands both the same object.
+        if "value" not in self.__dict__:
+            self.value = _import_name(self.name)
+        return self.value
+
+    def __repr__(self) -> str:
+        return f"lazy_import({self.name!r})"
 
 
 def issubclassable(cls: tx.Any) -> bool:
