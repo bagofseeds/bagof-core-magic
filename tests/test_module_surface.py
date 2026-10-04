@@ -15,6 +15,8 @@ from bagof.core.magic import (
     UNSET,
     MagicHint,
     Unset,
+    _compat,
+    _introspect,
     eq_safenan,
     type2hint,
     unwrap,
@@ -161,9 +163,9 @@ def test_special_forms_are_never_treated_as_classes(form: tx.Any) -> None:
     # with `types.UnionType`), so `isinstance(hint, type)` answers
     # differently across the versions this package supports. The answer
     # is pinned rather than inherited.
-    assert magic._is_special_form(form) is True
+    assert _compat._is_special_form(form) is True
     assert magic.issubclassable(form) is False
-    assert magic._is_concrete_type(form) is False
+    assert _introspect._is_concrete_type(form) is False
     assert magic.safe_issubclass(form, object) is False
     assert magic.safe_issubclass(int, form) is False
 
@@ -172,5 +174,5 @@ def test_special_forms_are_never_treated_as_classes(form: tx.Any) -> None:
                                           (abc.Sequence, False)])
 def test_real_classes_are_unaffected(cls: type, expected: bool) -> None:
     # Abstract classes are not concrete either, but for the usual reason.
-    assert magic._is_concrete_type(cls) is expected
+    assert _introspect._is_concrete_type(cls) is expected
     assert magic.issubclassable(cls) is True

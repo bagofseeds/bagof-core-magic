@@ -259,7 +259,7 @@ def test_issubhint_with_ellipsis_arguments(
 
 def test_issubnone_rejects_a_non_none_superhint() -> None:
     # locals
-    from bagof.core.magic import _issubnone
+    from bagof.core.magic._relation import _issubnone
 
     with pytest.raises(TypeError, match="is not a NoneType"):
         _issubnone(type(None), int)
@@ -267,7 +267,7 @@ def test_issubnone_rejects_a_non_none_superhint() -> None:
 
 def test_issubunion_rejects_a_non_union_superhint() -> None:
     # locals
-    from bagof.core.magic import _issubunion
+    from bagof.core.magic._relation import _issubunion
 
     with pytest.raises(TypeError, match="is not a Union type"):
         _issubunion(int, int)

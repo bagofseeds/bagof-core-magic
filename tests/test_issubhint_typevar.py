@@ -5,7 +5,8 @@ import pytest
 import typing_extensions as tx
 
 # locals
-from bagof.core.magic import _issubtypevar, issubhint
+from bagof.core.magic import issubhint
+from bagof.core.magic._relation import _issubtypevar
 
 ANY_T = tx.TypeVar("ANY_T")
 INT_T = tx.TypeVar("INT_T", bound=int)
