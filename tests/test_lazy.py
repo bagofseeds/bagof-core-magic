@@ -269,14 +269,28 @@ def test_builtins_are_not_looked_up(monkeypatch: tx.Any) -> None:
     assert len(pending(registry)) == 1
 
 
+def _forward_ref(name: str) -> tx.Any:
+    """A `ForwardRef` holding `name`, even one that is not valid Python."""
+    try:
+        return tx.ForwardRef(name)
+    except SyntaxError:
+        # Before 3.14, `ForwardRef` compiles its argument, and refuses
+        # some of these; its `__forward_arg__` is a plain slot there. From
+        # 3.14 on construction never compiles (and the attribute is a
+        # read-only property), so this branch is not reached.
+        ref = tx.ForwardRef("x")
+        try:
+            ref.__forward_arg__ = name
+        except AttributeError:  # pragma: no cover
+            pytest.skip(f"cannot build a ForwardRef holding {name!r}")
+        return ref
+
+
 @pytest.mark.parametrize(
     "name", ["Optional[Foo]", "a | None", "a..b", "1a.B", "", "a.b()"]
 )
 def test_defer_rejects_a_non_dotted_name(name: str) -> None:
-    # Some of these are refused by `ForwardRef` itself (it compiles its
-    # argument) on some Pythons; build the ref regardless.
-    ref = tx.ForwardRef("x")
-    ref.__forward_arg__ = name
+    ref = _forward_ref(name)
     with pytest.raises(ValueError, match="dotted name"):
         defer({}, ref, 1)
 
