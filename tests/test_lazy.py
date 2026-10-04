@@ -13,6 +13,7 @@ import typing_extensions as tx
 # locals
 import bagof.core.magic as magic
 from bagof.core.magic import (
+    _lazy,
     clear_pending,
     defer,
     find_name,
@@ -28,9 +29,9 @@ from bagof.core.magic import (
 @pytest.fixture(autouse=True)
 def _restore_pending() -> tx.Iterator[None]:
     """Drop the pending entries a test leaves behind."""
-    saved = list(magic._PENDING)
+    saved = list(_lazy._PENDING)
     yield
-    magic._PENDING[:] = saved
+    _lazy._PENDING[:] = saved
 
 
 def _fake_module(name: str, monkeypatch: tx.Any) -> tx.Any:
@@ -407,12 +408,12 @@ def test_pending_entries_are_per_registry(monkeypatch: tx.Any) -> None:
 def test_resolve_pending_returns_at_once_when_nothing_is_pending(
     monkeypatch: tx.Any,
 ) -> None:
-    magic._PENDING[:] = []
+    _lazy._PENDING[:] = []
 
     def boom(*args: tx.Any) -> tx.NoReturn:
         raise AssertionError("looked up a name with nothing pending")
 
-    monkeypatch.setattr(magic, "_find_name", boom)
+    monkeypatch.setattr(_lazy, "_find_name", boom)
     resolve_pending()
     assert get_from_registry(int, {int: 1}) == 1
 
@@ -440,14 +441,14 @@ def test_pending_entry_of_a_collected_registry_is_dropped() -> None:
     registry = Registry()
     defer(registry, tx.ForwardRef("_bagof_lazy_gc.Thing"), "lazy")
     assert len(pending(registry)) == 1
-    count = len(magic._PENDING)
+    count = len(_lazy._PENDING)
     del registry
     gc.collect()
     assert all(
         name != "_bagof_lazy_gc.Thing" for _, name, _ in pending()
     )
     resolve_pending()
-    assert len(magic._PENDING) == count - 1
+    assert len(_lazy._PENDING) == count - 1
 
 
 def test_plain_dict_registry_is_held_until_resolved(
@@ -455,7 +456,7 @@ def test_plain_dict_registry_is_held_until_resolved(
 ) -> None:
     registry: tx.Dict[tx.Any, tx.Any] = {}
     defer(registry, tx.ForwardRef("_bagof_lazy_strong.Thing"), "lazy")
-    entry = magic._PENDING[-1]
+    entry = _lazy._PENDING[-1]
     assert entry.registry() is registry
 
 
@@ -525,7 +526,7 @@ def test_lazy_import_imports_on_first_access(monkeypatch: tx.Any) -> None:
         imported.append(name)
         return {"_bagof_lazy_imp": module}[name]
 
-    monkeypatch.setattr(magic.importlib, "import_module", fake_import)
+    monkeypatch.setattr(_lazy.importlib, "import_module", fake_import)
 
     class Holder:
         DEFAULT = lazy_import("_bagof_lazy_imp.Thing")
