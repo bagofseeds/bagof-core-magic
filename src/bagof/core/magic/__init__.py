@@ -27,6 +27,7 @@ __all__ = [
     "REAL_TYPES",
     "UNION_TYPES",
     "UnionType",
+    "clear_pending",
     "defer",
     "find_name",
     "has_module",
@@ -60,19 +61,12 @@ import typing_extensions as tx
 # optionals
 if tx.TYPE_CHECKING:
     from types import NoneType, UnionType
-
-    import numpy as _np
 else:
     try:
         from types import NoneType, UnionType
     except ImportError:  # pragma: no cover  -- Python < 3.10
         NoneType = type(None)
         UnionType = tx.Union
-
-    try:
-        import numpy as _np
-    except ImportError:  # pragma: no cover  -- numpy is optional
-        _np = None
 
 # typing
 T = tx.TypeVar("T", covariant=True)
@@ -83,10 +77,14 @@ UNION_TYPES = (
 )
 """The union spellings this package understands."""
 
-REAL_TYPES = (
-    (numbers.Real, _np.floating) if _np is not None else (numbers.Real,)
-)
-"""The real-number types [`eq_safenan`][] recognises."""
+REAL_TYPES = (numbers.Real,)
+"""
+The real-number types [`eq_safenan`][] recognises.
+
+!!! note
+    NumPy registers `numpy.floating` as a [`numbers.Real`][], so NumPy
+    floats are recognised without this package importing NumPy.
+"""
 
 _SPECIAL_FORMS = (tx.Any, tx.Optional, tx.Literal, tx.Annotated) + UNION_TYPES
 """
@@ -796,7 +794,11 @@ nothing is lost by waiting.
 """
 
 _PENDING_LOCK = threading.RLock()
-"""Guards every mutation of `_PENDING`, and the registry write with it."""
+"""
+Guards every read-modify-write of `_PENDING`. Registry writes happen
+after it is released, since they may run arbitrary code (`__hash__`,
+`__eq__`, a `__setitem__` override).
+"""
 
 
 def is_forward_ref(obj: tx.Any) -> bool:
@@ -835,47 +837,69 @@ def defer(
         at runtime, so a key spelled with it never resolves. Use the real
         dotted path - `ForwardRef("dask.array.Array")`, not an alias such
         as `"da.Array"` - or `ForwardRef("Array", module="dask.array")`.
-        [`pending`][] lists the keys still waiting.
+        Builtins are not looked up either: `ForwardRef("int")` never
+        resolves (key the registry by `int` itself). [`pending`][] lists
+        the keys still waiting.
 
     !!! note "Ordering"
-        "Last registration wins" holds as for plain keys: a newer
-        registration of the same name in the same registry replaces an
-        older pending one, and pending entries are applied oldest first.
-        Each entry takes effect when it resolves, though, so two different
-        spellings of one object (or a forward reference and a plain key
-        written while the reference could not be resolved yet) are applied
-        in resolution order. A caller writing plain keys into a registry
-        that also receives lazy ones should call [`resolve_pending`][]
-        first, so that an older lazy key that is already resolvable does
-        not override the newer plain one later.
+        "Last registration wins" holds as for plain keys:
+
+        - a newer registration of the same name in the same registry
+          replaces an older pending one;
+        - pending entries are applied oldest first, and an entry that
+          resolves now is registered at once;
+        - a pending entry never overrides a key already present in the
+          registry when it resolves. It is pending only because its
+          object could not be reached when it was registered, so a key
+          already there for that object was (almost always) written
+          later - typically a plain `#!python registry[obj] = value`.
+
+        Consequently, two different spellings of one object that resolve
+        in different passes are not ordered by registration: the first
+        one to resolve wins. (Entries resolving in the same pass keep
+        registration order.)
 
     !!! note "Lifetime"
         A pending entry holds a weak reference to `registry` when it
         supports one (a `dict` subclass), and is dropped once the registry
         is collected; a plain `dict` is held strongly until the entry
-        resolves. `value` is always held strongly.
+        resolves, or until [`clear_pending`][]. `value` is always held
+        strongly.
 
     Parameters
     ----------
     registry : dict
         The registry to fill.
     ref : ForwardRef
-        The forward reference. Its `module=` (Python 3.9.7+), if set,
-        takes precedence over `context`.
+        The forward reference. It must hold a dotted name
+        (`"package.module.Name"`, `"Name"`), not an expression such as
+        `"Optional[Name]"`. Its `module=` (Python 3.9.7+), if set, takes
+        precedence over `context`.
     value : Any
         The value to register.
     context : str, optional
         The module a relative name is looked up in, usually the
         `__module__` of the class being registered.
+
+    Raises
+    ------
+    TypeError
+        If `ref` is not a [`ForwardRef`][typing.ForwardRef].
+    ValueError
+        If `ref` does not hold a dotted name.
     """
     if not is_forward_ref(ref):
         raise TypeError(f"Expected a ForwardRef, got {ref!r}")
-    context = getattr(ref, "__forward_module__", None) or context
     name = ref.__forward_arg__
+    if not all(part.isidentifier() for part in name.split(".")):
+        raise ValueError(
+            f"A lazy registry key must be a dotted name, got {name!r}"
+        )
+    context = getattr(ref, "__forward_module__", None) or context
     # Settle the older entries that are resolvable first, so that they do
     # not override this newer one when they are applied later.
     resolve_pending()
-    obj = find_name(name, context)
+    obj = _find_name(name, context)
     with _PENDING_LOCK:
         # Compare names, not refs: `ForwardRef` equality also involves
         # fields that vary across Python versions.
@@ -890,8 +914,10 @@ def defer(
             _PENDING.append(
                 _Pending(_registry_ref(registry), context, name, value)
             )
-        else:
-            registry[obj] = value
+    if obj is not _MISSING:
+        # Unconditional, like a plain key: this is the newest
+        # registration.
+        registry[obj] = value
 
 
 def resolve_pending() -> None:
@@ -900,7 +926,15 @@ def resolve_pending() -> None:
     registry, oldest first. Returns at once when nothing is pending.
 
     [`get_from_registry`][] calls this before every lookup, so a caller
-    only needs it before reading a registry directly.
+    only needs it before reading a registry directly. A resolved entry is
+    not written over a key already present for its object - see the
+    ordering note of [`defer`][].
+
+    !!! note "Cost"
+        Every pending entry is looked up on each call, so a lookup costs
+        time linear in the number of entries that never resolve (about a
+        microsecond each - an optional library that is installed but
+        never imported, or a misspelt name).
 
     !!! note
         A name that resolves to an unhashable object cannot key a
@@ -917,33 +951,41 @@ def resolve_pending() -> None:
         if entry.registry() is None:
             found.append((entry, _MISSING))
             continue
-        obj = find_name(entry.name, entry.context)
+        obj = _find_name(entry.name, entry.context)
         if obj is not _MISSING:
             found.append((entry, obj))
     if not found:
         return
+    # Pop under the lock, so that each entry is applied at most once.
+    # Identity: another thread may have resolved this entry, or replaced
+    # it with a newer registration, in the meantime.
     with _PENDING_LOCK:
-        for entry, obj in found:
-            # Identity: another thread may have resolved this entry, or
-            # replaced it with a newer registration, in the meantime.
-            index = next(
-                (i for i, e in enumerate(_PENDING) if e is entry), None
+        live = {id(entry) for entry in _PENDING}
+        found = [(entry, obj) for entry, obj in found if id(entry) in live]
+        popped = {id(entry) for entry, _ in found}
+        _PENDING[:] = [e for e in _PENDING if id(e) not in popped]
+    # Write after releasing it: a registry write may run arbitrary code.
+    written: tx.List[tx.Tuple[dict, tx.Any]] = []
+    for entry, obj in found:
+        registry = entry.registry()
+        if registry is None or obj is _MISSING:
+            continue
+        try:
+            if obj in registry and not any(
+                reg is registry and key is obj for reg, key in written
+            ):
+                # A newer (plain) key for this object: keep it.
+                continue
+            registry[obj] = entry.value
+        except TypeError:
+            warnings.warn(
+                f"Lazy registry key {entry.name!r} resolved to an "
+                f"unhashable object {obj!r}; dropped.",
+                RuntimeWarning,
+                stacklevel=3,
             )
-            if index is None:
-                continue
-            del _PENDING[index]
-            registry = entry.registry()
-            if registry is None or obj is _MISSING:
-                continue
-            try:
-                registry[obj] = entry.value
-            except TypeError:
-                warnings.warn(
-                    f"Lazy registry key {entry.name!r} resolved to an "
-                    f"unhashable object {obj!r}; dropped.",
-                    RuntimeWarning,
-                    stacklevel=2,
-                )
+            continue
+        written.append((registry, obj))
 
 
 def pending(
@@ -966,6 +1008,20 @@ def pending(
     return out
 
 
+def clear_pending(registry: tx.Optional[dict] = None) -> None:
+    """
+    Drop the pending registrations (of `registry`, or of every registry)
+    without applying them. Meant for test isolation.
+    """
+    with _PENDING_LOCK:
+        _PENDING[:] = [
+            entry for entry in _PENDING
+            if registry is not None
+            and entry.registry() is not None
+            and entry.registry() is not registry
+        ]
+
+
 def find_name(name: str, context: tx.Optional[str] = None) -> tx.Any:
     """
     The object a dotted name refers to, if it is already imported. Never
@@ -981,13 +1037,30 @@ def find_name(name: str, context: tx.Optional[str] = None) -> tx.Any:
     A module is always read through its `__dict__`, so a module-level
     `__getattr__` ([PEP 562](https://peps.python.org/pep-0562/)) cannot
     import anything: a submodule that has not been imported yet is not
-    found.
+    found. Builtins are not looked up.
 
     Returns
     -------
     Any
-        The object, or a private marker if it cannot be found (yet).
+        The object.
+
+    Raises
+    ------
+    NameError
+        If the name cannot be found (yet).
     """
+    obj = _find_name(name, context)
+    if obj is _MISSING:
+        raise NameError(
+            f"{name!r} cannot be found"
+            + (f" from {context!r}" if context else "")
+            + " among the imported modules"
+        )
+    return obj
+
+
+def _find_name(name: str, context: tx.Optional[str] = None) -> tx.Any:
+    """[`find_name`][], returning `_MISSING` instead of raising."""
     parts = name.split(".")
     # 1. relative to the context module
     module = sys.modules.get(context) if context else None
@@ -1054,6 +1127,12 @@ class lazy_import:
 
     The name must be fully qualified (`"package.module.Name"`); it is
     imported the first time the attribute is read, and kept.
+
+    !!! warning
+        *Any* read of the class attribute imports it - including
+        [`dir`][]-and-`getattr` walks such as [`inspect.getmembers`][],
+        documentation generators, or `cls.DEFAULT` used as a fallback
+        registry key. Pass explicit (lazy) keys where that matters.
 
     !!! example
         ```python

@@ -64,6 +64,24 @@ def test_import_does_not_import_backends() -> None:
     assert out.strip() == "[]"
 
 
+def test_import_does_not_import_numpy() -> None:
+    # numpy alone used to be about half of the import time of every bag.
+    out = _run("""
+        import bagof.core.magic
+        print("numpy" in sys.modules)
+    """)
+    assert out.strip() == "False"
+
+
+def test_numpy_floats_are_still_real_types() -> None:
+    np = pytest.importorskip("numpy")
+    from bagof.core.magic import eq_safenan
+
+    for dtype in (np.float16, np.float32, np.float64, np.longdouble):
+        nan = dtype("nan")
+        assert eq_safenan(nan) is eq_safenan(float("nan"))
+
+
 def test_lazy_key_does_not_import_its_target(lazypkg: pathlib.Path) -> None:
     out = _run("""
         import typing

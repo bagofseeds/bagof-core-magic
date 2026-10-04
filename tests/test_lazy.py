@@ -13,6 +13,7 @@ import typing_extensions as tx
 # locals
 import bagof.core.magic as magic
 from bagof.core.magic import (
+    clear_pending,
     defer,
     find_name,
     get_from_registry,
@@ -51,8 +52,8 @@ class _Other:
 
 @pytest.mark.parametrize(
     "name",
-    ["defer", "find_name", "has_module", "is_forward_ref", "lazy_import",
-     "pending", "resolve_pending"],
+    ["clear_pending", "defer", "find_name", "has_module", "is_forward_ref",
+     "lazy_import", "pending", "resolve_pending"],
 )
 def test_lazy_names_are_exported(name: str) -> None:
     assert name in magic.__all__
@@ -149,8 +150,9 @@ def test_module_getattr_is_never_called(monkeypatch: tx.Any) -> None:
     registry: tx.Dict[tx.Any, tx.Any] = {}
     defer(registry, tx.ForwardRef("_bagof_lazy_pep562.Thing"), "lazy")
     assert get_from_registry(_Thing, registry) is None
+    with pytest.raises(NameError):
+        find_name("_bagof_lazy_pep562.Thing")
     assert calls == []
-    assert find_name("_bagof_lazy_pep562.Thing") is magic._MISSING
 
 
 def test_forward_ref_key_relative_to_the_context_module(
@@ -246,9 +248,37 @@ def test_forward_ref_key_relative_miss_falls_back_to_absolute(
     assert registry == {_Thing: "lazy"}
 
 
-def test_find_name_of_an_unknown_name() -> None:
-    assert find_name("_bagof_lazy_nowhere.Thing") is magic._MISSING
-    assert find_name("Thing", "_bagof_lazy_nowhere") is magic._MISSING
+def test_find_name_of_an_unknown_name_raises() -> None:
+    with pytest.raises(NameError):
+        find_name("_bagof_lazy_nowhere.Thing")
+    with pytest.raises(NameError, match="_bagof_lazy_ctx"):
+        find_name("Thing", "_bagof_lazy_ctx")
+
+
+def test_find_name_of_a_known_name(monkeypatch: tx.Any) -> None:
+    _fake_module("_bagof_lazy_known", monkeypatch).Thing = _Thing
+    assert find_name("_bagof_lazy_known.Thing") is _Thing
+    assert find_name("Thing", "_bagof_lazy_known") is _Thing
+
+
+def test_builtins_are_not_looked_up(monkeypatch: tx.Any) -> None:
+    _fake_module("_bagof_lazy_builtin", monkeypatch)
+    registry: tx.Dict[tx.Any, tx.Any] = {}
+    defer(registry, tx.ForwardRef("int"), "lazy", "_bagof_lazy_builtin")
+    assert registry == {}
+    assert len(pending(registry)) == 1
+
+
+@pytest.mark.parametrize(
+    "name", ["Optional[Foo]", "a | None", "a..b", "1a.B", "", "a.b()"]
+)
+def test_defer_rejects_a_non_dotted_name(name: str) -> None:
+    # Some of these are refused by `ForwardRef` itself (it compiles its
+    # argument) on some Pythons; build the ref regardless.
+    ref = tx.ForwardRef("x")
+    ref.__forward_arg__ = name
+    with pytest.raises(ValueError, match="dotted name"):
+        defer({}, ref, 1)
 
 
 # --- ordering -----------------------------------------------------------
@@ -276,6 +306,61 @@ def test_forward_ref_key_and_real_key_last_registration_wins(
     # real, then ref (module loaded): the ref key wins
     defer(registry, tx.ForwardRef(ref), "fourth")
     assert get_from_registry(_Thing, registry) == "fourth"
+
+
+def test_older_lazy_key_does_not_override_a_newer_plain_key(
+    monkeypatch: tx.Any,
+) -> None:
+    """A plain key written once the target exists beats a pending one."""
+    registry: tx.Dict[tx.Any, tx.Any] = {}
+    defer(registry, tx.ForwardRef("_bagof_lazy_user.Thing"), "package")
+    # the user imports the library and registers their own value, without
+    # any lookup in between
+    _fake_module("_bagof_lazy_user", monkeypatch).Thing = _Thing
+    registry[_Thing] = "user"
+    assert get_from_registry(_Thing, registry) == "user"
+    assert pending(registry) == []
+
+
+def test_two_spellings_resolved_in_one_pass_keep_registration_order(
+    monkeypatch: tx.Any,
+) -> None:
+    registry: tx.Dict[tx.Any, tx.Any] = {}
+    defer(registry, tx.ForwardRef("_bagof_lazy_pass.Thing"), "older")
+    defer(registry, tx.ForwardRef("_bagof_lazy_pass.Alias"), "newer")
+    module = _fake_module("_bagof_lazy_pass", monkeypatch)
+    module.Thing = module.Alias = _Thing
+    assert get_from_registry(_Thing, registry) == "newer"
+
+
+def test_two_spellings_resolved_in_two_passes_first_wins(
+    monkeypatch: tx.Any,
+) -> None:
+    """Documented: across passes, the first spelling to resolve wins."""
+    registry: tx.Dict[tx.Any, tx.Any] = {}
+    defer(registry, tx.ForwardRef("_bagof_lazy_late.Thing"), "older")
+    defer(registry, tx.ForwardRef("_bagof_lazy_early.Thing"), "newer")
+    _fake_module("_bagof_lazy_early", monkeypatch).Thing = _Thing
+    assert get_from_registry(_Thing, registry) == "newer"
+    _fake_module("_bagof_lazy_late", monkeypatch).Thing = _Thing
+    assert get_from_registry(_Thing, registry) == "newer"
+    assert pending(registry) == []
+
+
+def test_clear_pending(monkeypatch: tx.Any) -> None:
+    one: tx.Dict[tx.Any, tx.Any] = {}
+    two: tx.Dict[tx.Any, tx.Any] = {}
+    defer(one, tx.ForwardRef("_bagof_lazy_clear.Thing"), 1)
+    defer(two, tx.ForwardRef("_bagof_lazy_clear.Thing"), 2)
+    clear_pending(one)
+    assert pending(one) == []
+    assert pending(two) == [(None, "_bagof_lazy_clear.Thing", 2)]
+    clear_pending()
+    assert pending() == []
+    # nothing is applied
+    _fake_module("_bagof_lazy_clear", monkeypatch).Thing = _Thing
+    resolve_pending()
+    assert one == two == {}
 
 
 def test_defer_settles_older_entries_first(monkeypatch: tx.Any) -> None:
@@ -313,7 +398,7 @@ def test_resolve_pending_returns_at_once_when_nothing_is_pending(
     def boom(*args: tx.Any) -> tx.NoReturn:
         raise AssertionError("looked up a name with nothing pending")
 
-    monkeypatch.setattr(magic, "find_name", boom)
+    monkeypatch.setattr(magic, "_find_name", boom)
     resolve_pending()
     assert get_from_registry(int, {int: 1}) == 1
 
