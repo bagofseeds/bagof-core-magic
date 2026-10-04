@@ -8,6 +8,7 @@ from collections import abc
 import pytest
 import typing_extensions as tx
 
+# locals
 from bagof.core.magic import (
     get_concrete_type,
     get_default,
@@ -18,8 +19,6 @@ from bagof.core.magic import (
     safe_issubclass,
     unwrap,
 )
-
-# locals
 from bagof.core.magic._introspect import _unwrap_typevar
 from bagof.core.magic._registry import _type_dist
 
