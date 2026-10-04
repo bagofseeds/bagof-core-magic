@@ -46,8 +46,6 @@ __all__ = [
 #   _registry    `get_from_registry`, ...           _compat, _introspect, _lazy
 #   _errors      `MagicError`, `MultipleCauses`     _compat
 #   _hint        `MagicHint`                        all but _registry, _lazy
-# The `_x as _x` imports keep private names that tests and sibling packages
-# import from here (and old `MagicError` pickles) resolving.
 
 # locals
 from ._compat import (
@@ -58,12 +56,8 @@ from ._compat import (
     UnionType,
     Unset,
 )
-from ._compat import _is_special_form as _is_special_form
 from ._errors import MagicError, MultipleCauses
-from ._errors import _rebuild_magic_error as _rebuild_magic_error
 from ._hint import MagicHint
-from ._introspect import _is_concrete_type as _is_concrete_type
-from ._introspect import _unwrap_typevar as _unwrap_typevar
 from ._introspect import (
     eq_safenan,
     get_args_uw,
@@ -91,12 +85,5 @@ from ._lazy import (
     pending,
     resolve_pending,
 )
-from ._registry import _type_dist as _type_dist
 from ._registry import get_default, get_from_registry
-from ._relation import _ishintstance_type as _ishintstance_type
-from ._relation import _issubliteral as _issubliteral
-from ._relation import _issubnone as _issubnone
-from ._relation import _issubtype as _issubtype
-from ._relation import _issubtypevar as _issubtypevar
-from ._relation import _issubunion as _issubunion
 from ._relation import ishintstance, issubhint

@@ -5,7 +5,8 @@ import pytest
 import typing_extensions as tx
 
 # locals
-from bagof.core.magic import _issubliteral, issubhint
+from bagof.core.magic import issubhint
+from bagof.core.magic._relation import _issubliteral
 
 L = tx.Literal
 

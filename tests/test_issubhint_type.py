@@ -5,7 +5,8 @@ import pytest
 import typing_extensions as tx
 
 # locals
-from bagof.core.magic import _issubtype, issubhint
+from bagof.core.magic import issubhint
+from bagof.core.magic._relation import _issubtype
 
 # (hint, superhint, expected)
 TYPE_CASES = [

@@ -8,10 +8,7 @@ from collections import abc
 import pytest
 import typing_extensions as tx
 
-# locals
 from bagof.core.magic import (
-    _type_dist,
-    _unwrap_typevar,
     get_concrete_type,
     get_default,
     get_from_registry,
@@ -21,6 +18,10 @@ from bagof.core.magic import (
     safe_issubclass,
     unwrap,
 )
+
+# locals
+from bagof.core.magic._introspect import _unwrap_typevar
+from bagof.core.magic._registry import _type_dist
 
 
 class Base(tx.TypedDict):
@@ -525,7 +526,7 @@ def test_ishintstance_of_a_bare_union_asks_whether_it_is_one() -> None:
 
 def test_ishintstance_type_rejects_a_non_type_hint() -> None:
     # locals
-    from bagof.core.magic import _ishintstance_type
+    from bagof.core.magic._relation import _ishintstance_type
 
     with pytest.raises(TypeError, match="is not a type"):
         _ishintstance_type(int, int)
